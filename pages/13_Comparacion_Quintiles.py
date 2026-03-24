@@ -17,6 +17,7 @@ import streamlit as st
 from utils.excel_loader import load_excel_sheet
 from utils.quintile_ranges import asignar_quintil_por_rangos, calcular_rangos_quintiles
 from utils.student_columns import normalize_university_column
+from utils.student_filters import render_student_academic_filters
 from utils.udla_sql import cargar_datos_udla
 from utils.comparacion_helpers import (
     load_ubicacion_periodo,
@@ -316,28 +317,12 @@ if personas_udla.empty or familiares_udla.empty:
 # ─── Filtros principales ─────────────────────────────────────────────────────
 
 st.markdown("#### ⚙️ Filtros principales")
-col_f1, col_f2, col_f3, col_f4 = st.columns(4)
+col_f1, col_f2, col_f3 = st.columns(3)
 
-estudiantes_filtrados = estudiantes
-universidad_sel = "Todas las universidades"
-
-with col_f1:
-    if "Universidad" in estudiantes.columns:
-        universidades_disponibles = sorted(
-            estudiantes["Universidad"].dropna().astype(str).str.strip().unique().tolist()
-        )
-        universidad_sel = st.selectbox(
-            "Universidad",
-            options=["Todas las universidades"] + universidades_disponibles,
-            index=0,
-            key="q13_universidad",
-        )
-        if universidad_sel != "Todas las universidades":
-            estudiantes_filtrados = estudiantes[
-                estudiantes["Universidad"] == universidad_sel
-            ]
-    else:
-        st.warning("La hoja Estudiantes no contiene la columna 'Universidad'.")
+estudiantes_filtrados, filtros_estudiantes = render_student_academic_filters(
+    estudiantes, key_prefix="q13"
+)
+universidad_sel = filtros_estudiantes["universidad"] or "Todas las universidades"
 
 titulo_universidad = (
     universidad_sel
@@ -357,7 +342,7 @@ header_placeholder.markdown(
     unsafe_allow_html=True,
 )
 
-with col_f2:
+with col_f1:
     quintil_ref_opts = ["Todos"] + QUINTIL_ORDER
     quintil_ref_sel = st.selectbox(
         "Quintil Universidad (referencia)",
@@ -375,7 +360,7 @@ with col_f2:
         index=0,
     )
 
-with col_f3:
+with col_f2:
     grupo_udla = st.selectbox(
         "Grupo UDLA",
         options=["E", "A", "G"],
@@ -387,7 +372,7 @@ with col_f3:
         index=0,
     )
 
-with col_f4:
+with col_f3:
     if "periodo" in personas_udla.columns:
         personas_periodo = personas_udla.copy()
         if "tipo" in personas_periodo.columns:
@@ -446,6 +431,7 @@ if estudiantes_filtrados.empty:
 # Perfil Universidad – hogares con quintiles personalizados
 # ═══════════════════════════════════════════════════════════════════════════════
 
+estudiantes_filtrados = estudiantes_filtrados.copy()
 estudiantes_filtrados["IDENTIFICACION"] = norm_id(estudiantes_filtrados["IDENTIFICACION"])
 ids_estudiantes = set(estudiantes_filtrados["IDENTIFICACION"].unique().tolist())
 universo_familiares["IDENTIFICACION"] = norm_id(universo_familiares["IDENTIFICACION"])

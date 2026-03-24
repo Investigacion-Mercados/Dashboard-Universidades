@@ -14,6 +14,8 @@ import pandas as pd
 import streamlit as st
 
 from utils.excel_loader import load_excel_sheet
+from utils.student_columns import normalize_university_column
+from utils.student_filters import render_student_academic_filters
 from utils.udla_sql import cargar_datos_udla
 from utils.comparacion_helpers import (
     QUINTIL_LABELS,
@@ -249,6 +251,7 @@ with st.spinner("Cargando datos de la universidad …"):
         estudiantes = estudiantes.rename(columns={"Cedula": "IDENTIFICACION"})
     elif "CEDULA" in estudiantes.columns:
         estudiantes = estudiantes.rename(columns={"CEDULA": "IDENTIFICACION"})
+    estudiantes = normalize_university_column(estudiantes)
 
 with st.spinner("Conectando con SQL UDLA …"):
     udla = cargar_datos_udla()
@@ -266,6 +269,9 @@ if personas_udla.empty or familiares_udla.empty:
 # ─── Filtros principales (sidebar-style, arriba de los tabs) ──────────────────
 
 st.markdown("#### ⚙️ Filtros principales")
+estudiantes_filtrados, _filtros_estudiantes = render_student_academic_filters(
+    estudiantes, key_prefix="comparacion_udla"
+)
 col_f1, col_f2, col_f3 = st.columns(3)
 with col_f1:
     comparar_por = st.selectbox(
@@ -333,12 +339,17 @@ for label_check, val in [
 # Perfil universidad
 # ═══════════════════════════════════════════════════════════════════════════════
 
-estudiantes["IDENTIFICACION"] = norm_id(estudiantes["IDENTIFICACION"])
-ids_estudiantes = set(estudiantes["IDENTIFICACION"].unique().tolist())
+if estudiantes_filtrados.empty:
+    st.info("No hay estudiantes para los filtros seleccionados.")
+    st.stop()
+
+estudiantes_filtrados = estudiantes_filtrados.copy()
+estudiantes_filtrados["IDENTIFICACION"] = norm_id(estudiantes_filtrados["IDENTIFICACION"])
+ids_estudiantes = set(estudiantes_filtrados["IDENTIFICACION"].unique().tolist())
 universo_familiares["IDENTIFICACION"] = norm_id(universo_familiares["IDENTIFICACION"])
 
 familias_col, mapa_col = build_familias(
-    estudiantes[["IDENTIFICACION"]].copy(),
+    estudiantes_filtrados[["IDENTIFICACION"]].copy(),
     universo_familiares,
     id_col="IDENTIFICACION",
     padre_col="CED_PADRE",
