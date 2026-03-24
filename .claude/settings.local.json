@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import py_compile; py_compile.compile\\(''pages/14_Propensity_Score.py'', doraise=True\\); print\\(''Page OK''\\)\")",
+      "Bash(python -c \"import py_compile; py_compile.compile\\(''utils/propensity_helpers.py'', doraise=True\\); print\\(''Helpers OK''\\)\")"
+    ]
+  }
+}
