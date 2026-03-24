@@ -1,0 +1,12 @@
+# Ignorar las variables de entorno
+.env
+
+# Ignorar los entornos virtuales
+.venv/
+
+# Ignorar los directorios pycache
+**/__pycache__/
+
+# Ignorar excels abiertos
+~$*.xlsx
+~$*.xls
