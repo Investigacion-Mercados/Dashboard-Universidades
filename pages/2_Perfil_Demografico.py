@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from utils.excel_loader import load_excel_sheet
+from utils.excel_loader import get_active_excel_filename, load_excel_sheet
 from utils.student_columns import normalize_university_column
 
 st.set_page_config(page_title="Perfil Demográfico", page_icon="👥", layout="wide")
@@ -76,12 +76,12 @@ def _conteos_tipo_hogar(df):
 
 
 @st.cache_data
-def load_data():
+def load_data(excel_filename: str):
     """Carga todas las hojas necesarias"""
-    estudiantes = load_excel_sheet("Estudiantes")
-    universo_familiares = load_excel_sheet("Universo Familiares")
-    empleo = load_excel_sheet("Empleos")
-    info_personal = load_excel_sheet("Informacion Personal")
+    estudiantes = load_excel_sheet("Estudiantes", excel_filename)
+    universo_familiares = load_excel_sheet("Universo Familiares", excel_filename)
+    empleo = load_excel_sheet("Empleos", excel_filename)
+    info_personal = load_excel_sheet("Informacion Personal", excel_filename)
 
     estudiantes = _normalizar_identificacion(
         estudiantes, ["IDENTIFICACION", "Cedula", "CEDULA"]
@@ -374,7 +374,10 @@ st.title("👥 Perfil Demográfico por Quintiles")
 
 # Cargar datos
 with st.spinner("Cargando datos..."):
-    estudiantes_df, universo_fam_df, empleo_df, info_personal_df = load_data()
+    excel_filename = get_active_excel_filename()
+    estudiantes_df, universo_fam_df, empleo_df, info_personal_df = load_data(
+        excel_filename
+    )
 
 col_filtro_1, col_filtro_2 = st.columns(2)
 universidad_sel = "Todas las universidades"

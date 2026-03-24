@@ -5,7 +5,7 @@ import sys
 
 # Añadir utils al path
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), "utils"))
-from excel_loader import load_excel_sheet
+from excel_loader import get_active_excel_filename, load_excel_sheet
 from student_columns import normalize_university_column
 
 # Configuración de la página
@@ -27,8 +27,8 @@ def _normalizar_universidad(df):
 
 
 @st.cache_data
-def load_estudiantes():
-    df_estudiantes = load_excel_sheet("Estudiantes", "data.xlsx")
+def load_estudiantes(excel_filename: str):
+    df_estudiantes = load_excel_sheet("Estudiantes", excel_filename)
     df_estudiantes = _normalizar_identificacion(
         df_estudiantes, ["IDENTIFICACION", "Cedula", "CEDULA"]
     )
@@ -36,7 +36,9 @@ def load_estudiantes():
 
 
 @st.cache_data
-def calcular_primera_generacion(universidad_sel="Todas las universidades"):
+def calcular_primera_generacion(
+    excel_filename: str, universidad_sel="Todas las universidades"
+):
     """
     Calcula el porcentaje de estudiantes que son primera generación de universitarios.
 
@@ -44,14 +46,14 @@ def calcular_primera_generacion(universidad_sel="Todas las universidades"):
     NIVEL_ESTUDIO = "SUPERIOR".
     """
     # Cargar datos
-    df_estudiantes = load_estudiantes()
+    df_estudiantes = load_estudiantes(excel_filename)
     if (
         universidad_sel != "Todas las universidades"
         and "Universidad" in df_estudiantes.columns
     ):
         df_estudiantes = df_estudiantes[df_estudiantes["Universidad"] == universidad_sel]
-    df_familiares = load_excel_sheet("Universo Familiares", "data.xlsx")
-    df_info = load_excel_sheet("Informacion Personal", "data.xlsx")
+    df_familiares = load_excel_sheet("Universo Familiares", excel_filename)
+    df_info = load_excel_sheet("Informacion Personal", excel_filename)
 
     # Obtener IDs únicos de estudiantes
     ids_estudiantes = df_estudiantes["IDENTIFICACION"].dropna().unique()
@@ -106,7 +108,8 @@ def calcular_primera_generacion(universidad_sel="Todas las universidades"):
 
 
 try:
-    df_estudiantes = load_estudiantes()
+    excel_filename = get_active_excel_filename()
+    df_estudiantes = load_estudiantes(excel_filename)
     universidad_sel = "Todas las universidades"
 
     if "Universidad" in df_estudiantes.columns:
@@ -122,7 +125,7 @@ try:
         st.warning("La hoja Estudiantes no contiene la columna 'Universidad'.")
 
     primera_gen, no_primera_gen, pct_primera, pct_no_primera, total = (
-        calcular_primera_generacion(universidad_sel)
+        calcular_primera_generacion(excel_filename, universidad_sel)
     )
 
     # Mostrar en dos columnas con tarjetas

@@ -9,7 +9,7 @@ from shapely.geometry import Point
 
 # Anadir utils al path
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), "utils"))
-from excel_loader import load_excel_sheet
+from excel_loader import get_active_excel_filename, load_excel_sheet
 
 # Configuracion de la pagina
 st.set_page_config(
@@ -53,14 +53,14 @@ def _normalizar_identificacion(df, columnas_posibles):
 
 
 @st.cache_data
-def cargar_estudiantes():
+def cargar_estudiantes(excel_filename: str):
     """Carga los estudiantes y sus ubicaciones"""
-    df_estudiantes = load_excel_sheet("Estudiantes", "data.xlsx")
+    df_estudiantes = load_excel_sheet("Estudiantes", excel_filename)
     df_estudiantes = _normalizar_identificacion(
         df_estudiantes, ["IDENTIFICACION", "Cedula", "CEDULA"]
     )
 
-    df_info = load_excel_sheet("Informacion Personal", "data.xlsx")
+    df_info = load_excel_sheet("Informacion Personal", excel_filename)
 
     # Filtrar solo estudiantes con ubicacion
     df_ubicaciones = df_info[
@@ -184,7 +184,8 @@ def crear_mapa(gdf_todas, df_estudiantes):
 # Cargar datos
 try:
     gdf_todas = cargar_geojson()
-    df_estudiantes = cargar_estudiantes()
+    excel_filename = get_active_excel_filename()
+    df_estudiantes = cargar_estudiantes(excel_filename)
 
     mapa = crear_mapa(gdf_todas, df_estudiantes)
 

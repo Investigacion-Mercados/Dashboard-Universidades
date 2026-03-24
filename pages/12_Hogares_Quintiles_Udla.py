@@ -4,7 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from utils.comparacion_helpers import build_familias, norm_id, salario_por_id
-from utils.excel_loader import load_excel_sheet
+from utils.excel_loader import get_active_excel_filename, load_excel_sheet
 from utils.student_columns import normalize_university_column
 
 
@@ -25,10 +25,10 @@ def _normalizar_universidad(df: pd.DataFrame) -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner=False)
-def load_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    estudiantes = load_excel_sheet("Estudiantes")
-    universo_familiares = load_excel_sheet("Universo Familiares")
-    empleo = load_excel_sheet("Empleos")
+def load_data(excel_filename: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    estudiantes = load_excel_sheet("Estudiantes", excel_filename)
+    universo_familiares = load_excel_sheet("Universo Familiares", excel_filename)
+    empleo = load_excel_sheet("Empleos", excel_filename)
 
     if "Cedula" in estudiantes.columns:
         estudiantes = estudiantes.rename(columns={"Cedula": "IDENTIFICACION"})
@@ -152,7 +152,8 @@ title_placeholder = st.empty()
 caption_placeholder = st.empty()
 
 with st.spinner("Cargando datos..."):
-    estudiantes, universo_familiares, empleo = load_data()
+    excel_filename = get_active_excel_filename()
+    estudiantes, universo_familiares, empleo = load_data(excel_filename)
 
 if estudiantes.empty or universo_familiares.empty or empleo.empty:
     st.info("No hay datos suficientes para calcular quintiles de hogares.")

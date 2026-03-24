@@ -1,7 +1,7 @@
 import pandas as pd
 import streamlit as st
 
-from utils.excel_loader import load_excel_sheet
+from utils.excel_loader import get_active_excel_filename, load_excel_sheet
 from utils.student_columns import normalize_university_column
 
 
@@ -49,10 +49,10 @@ def _normalizar_universidad(df: pd.DataFrame) -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner=False)
-def load_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    estudiantes = load_excel_sheet("Estudiantes")
-    universo_familiares = load_excel_sheet("Universo Familiares")
-    info_personal = load_excel_sheet("Informacion Personal")
+def load_data(excel_filename: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    estudiantes = load_excel_sheet("Estudiantes", excel_filename)
+    universo_familiares = load_excel_sheet("Universo Familiares", excel_filename)
+    info_personal = load_excel_sheet("Informacion Personal", excel_filename)
 
     if "Cedula" in estudiantes.columns:
         estudiantes = estudiantes.rename(columns={"Cedula": "IDENTIFICACION"})
@@ -155,7 +155,8 @@ def _estado_hogar(
 
 
 with st.spinner("Cargando datos..."):
-    estudiantes, universo_familiares, info_personal = load_data()
+    excel_filename = get_active_excel_filename()
+    estudiantes, universo_familiares, info_personal = load_data(excel_filename)
 
 estudiantes_filtrados = estudiantes
 if "Universidad" in estudiantes.columns:
