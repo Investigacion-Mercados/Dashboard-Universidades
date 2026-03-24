@@ -8,18 +8,11 @@ import streamlit as st
 
 from utils.comparacion_helpers import build_familias, norm_id, salario_por_id
 from utils.excel_loader import load_excel_sheet
+from utils.quintile_ranges import asignar_quintil_por_rangos, calcular_rangos_quintiles
 from utils.student_columns import normalize_university_column
 from utils.udla_sql import cargar_datos_udla
 
 QUINTIL_ORDER = ["Sin empleo", "1", "2", "3", "4", "5"]
-
-QUINTILES_INNOVA = {
-    1: {"min": 470.00, "max": 482.00},
-    2: {"min": 482.01, "max": 707.07},
-    3: {"min": 707.08, "max": 1104.36},
-    4: {"min": 1104.37, "max": 1856.00},
-    5: {"min": 1856.01, "max": 5011.00},
-}
 
 QUINTILES_UDLA = {
     1: {"min": 105.75, "max": 482.00},
@@ -80,20 +73,7 @@ def _select_anio_mes(
 
 
 def _asignar_quintil_custom(salario: float, rangos: dict[int, dict[str, float]]) -> str:
-    if pd.isna(salario) or float(salario) <= 0:
-        return "Sin empleo"
-    val = float(salario)
-    q_min = rangos[1]["min"]
-    q_max = rangos[5]["max"]
-    if val < q_min:
-        return "1"
-    if val > q_max:
-        return "5"
-    for q in [1, 2, 3, 4, 5]:
-        r = rangos[q]
-        if r["min"] <= val <= r["max"]:
-            return str(q)
-    return "Sin empleo"
+    return asignar_quintil_por_rangos(salario, rangos, vacio="Sin empleo")
 
 
 def _hogares_salario(df_mapa: pd.DataFrame, salario_map: dict) -> pd.DataFrame:
@@ -155,7 +135,7 @@ def _card_html(
     return f"""
     <div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:14px 16px;margin-bottom:12px;">
       <div style="font-size:18px;font-weight:700;color:#111827;margin-bottom:8px;">Quintil {quintil if quintil != 'Sin empleo' else 'Sin empleo'}</div>
-      <div style="font-size:12px;color:#4b5563;margin-bottom:10px;">Rango Innova: {rango_i}</div>
+      <div style="font-size:12px;color:#4b5563;margin-bottom:10px;">Rango referencia: {rango_i}</div>
       <div style="font-size:12px;color:#4b5563;margin-bottom:10px;">Rango UDLA: {rango_u}</div>
       <div style="display:flex;gap:10px;">
         <div style="flex:1;background:#eff6ff;border-radius:8px;padding:10px;">
@@ -173,11 +153,9 @@ def _card_html(
     """
 
 
-st.set_page_config(page_title="Quintiles Similares", page_icon="Q", layout="wide")
-st.title("Quintiles Similares: Innova vs UDLA")
-st.caption(
-    "Comparacion de distribucion de hogares por quintil con rangos especificos para Innova y UDLA."
-)
+st.set_page_config(page_title="Quintiles Similares vs UDLA", page_icon="Q", layout="wide")
+title_placeholder = st.empty()
+caption_placeholder = st.empty()
 
 with st.spinner("Cargando datos..."):
     estudiantes = load_excel_sheet("Estudiantes")
@@ -285,7 +263,14 @@ if estudiantes_filtrados.empty:
     st.stop()
 
 label_local = (
-    universidad_sel if universidad_sel != "Todas las universidades" else "Universidades"
+    universidad_sel
+    if universidad_sel != "Todas las universidades"
+    else "Todas las universidades"
+)
+
+title_placeholder.title(f"Quintiles Similares: {label_local} vs UDLA")
+caption_placeholder.caption(
+    f"Comparacion de distribucion de hogares por quintil entre {label_local} y UDLA."
 )
 
 # Universidad: hogares por familiares de estudiantes
@@ -301,8 +286,9 @@ empleo_i["IDENTIFICACION"] = norm_id(empleo_i["IDENTIFICACION"])
 empleo_i["SALARIO"] = pd.to_numeric(empleo_i["SALARIO"], errors="coerce").fillna(0.0)
 salario_map_i = salario_por_id(empleo_i, "IDENTIFICACION", "SALARIO")
 hogares_i = _hogares_salario(mapa_i, salario_map_i)
+rangos_universidad = calcular_rangos_quintiles(hogares_i["salario"])
 hogares_i["quintil"] = hogares_i["salario"].apply(
-    lambda x: _asignar_quintil_custom(x, QUINTILES_INNOVA)
+    lambda x: _asignar_quintil_custom(x, rangos_universidad)
 )
 
 # UDLA: hogares por familiares de estudiantes UDLA
@@ -379,7 +365,7 @@ for q in QUINTIL_ORDER:
             "pct_i": float(row["pct_universidad"]),
             "hog_u": int(row["hogares_udla"]),
             "pct_u": float(row["pct_udla"]),
-            "rango_i": _rango_text(q, QUINTILES_INNOVA),
+            "rango_i": _rango_text(q, rangos_universidad),
             "rango_u": _rango_text(q, QUINTILES_UDLA),
         }
     )

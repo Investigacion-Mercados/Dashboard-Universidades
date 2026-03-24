@@ -422,12 +422,7 @@ with st.spinner("Calculando métricas..."):
         rangos_quintiles,
     )
 
-tiene_solo_innova = (
-    "Universidad" in estudiantes_filtrados.columns
-    and not estudiantes_filtrados.empty
-    and estudiantes_filtrados["Universidad"].astype(str).str.strip().eq("INNOVA").all()
-)
-mostrar_desglose_tipo = "Tipo" in estudiantes_filtrados.columns and not tiene_solo_innova
+mostrar_desglose_tipo = "Tipo" in estudiantes_filtrados.columns
 
 # Tarjeta de población total
 total_poblacion = estudiantes_filtrados["IDENTIFICACION"].nunique()

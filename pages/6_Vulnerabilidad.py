@@ -3,6 +3,7 @@ import pandas as pd
 import streamlit as st
 
 from utils.excel_loader import load_excel_sheet
+from utils.quintile_ranges import asignar_quintil_por_rangos, calcular_rangos_quintiles
 from utils.student_columns import normalize_university_column
 
 ANIO_CORTE = 2025
@@ -29,14 +30,6 @@ QUINTILES_ECUADOR = {
     5: {"min": 2491.61, "max": 20009.99},
 }
 
-QUINTILES_INNOVA = {
-    1: {"min": 470.00, "max": 482.00},
-    2: {"min": 482.01, "max": 707.07},
-    3: {"min": 707.08, "max": 1104.36},
-    4: {"min": 1104.37, "max": 1856.00},
-    5: {"min": 1856.01, "max": 5011.00},
-}
-
 QUINTILES_UDLA = {
     1: {"min": 105.75, "max": 482.00},
     2: {"min": 482.01, "max": 850.92},
@@ -46,9 +39,6 @@ QUINTILES_UDLA = {
 }
 
 GRUPO_QUINTIL_OPTS = ["Todos", "1", "2", "3", "4", "5", "sin info"]
-RANGO_QUINTIL_OPTS = ["Ecuador", "Innova", "UDLA"]
-
-
 def tarjeta_simple(titulo: str, valor: str, color: str) -> None:
     st.markdown(
         f"""
@@ -117,28 +107,59 @@ def _empleo_reciente(empleo: pd.DataFrame) -> pd.DataFrame:
 
 
 def _asignar_quintil_custom(salario: float, rangos: dict[int, dict[str, float]]) -> str:
-    if pd.isna(salario) or float(salario) <= 0:
-        return "sin info"
-    val = float(salario)
-    q_min = rangos[1]["min"]
-    q_max = rangos[5]["max"]
-    if val < q_min:
-        return "1"
-    if val > q_max:
-        return "5"
-    for q in [1, 2, 3, 4, 5]:
-        r = rangos[q]
-        if r["min"] <= val <= r["max"]:
-            return str(q)
-    return "sin info"
+    return asignar_quintil_por_rangos(salario, rangos, vacio="sin info")
 
 
-def _rangos_por_nombre(nombre: str) -> dict[int, dict[str, float]]:
-    if nombre == "Innova":
-        return QUINTILES_INNOVA
+def _rangos_por_nombre(
+    nombre: str,
+    etiqueta_universidad: str,
+    rangos_universidad: dict[int, dict[str, float]],
+) -> dict[int, dict[str, float]]:
+    if nombre == etiqueta_universidad:
+        return rangos_universidad
     if nombre == "UDLA":
         return QUINTILES_UDLA
     return QUINTILES_ECUADOR
+
+
+def _calcular_rangos_universidad(
+    universo_familiares: pd.DataFrame, empleo: pd.DataFrame
+) -> dict[int, dict[str, float]]:
+    if universo_familiares.empty:
+        return calcular_rangos_quintiles(pd.Series(dtype=float))
+
+    u = _normalizar_ids_familia(universo_familiares.copy())
+    u["hogar_id"] = u.apply(
+        lambda r: "|".join(sorted([str(r["CED_PADRE"]), str(r["CED_MADRE"])])), axis=1
+    )
+    u = u[u["hogar_id"] != "0|0"].copy()
+    if u.empty:
+        return calcular_rangos_quintiles(pd.Series(dtype=float))
+
+    pares = []
+    for _, r in u.iterrows():
+        if r["CED_PADRE"] != 0:
+            pares.append((r["hogar_id"], int(r["CED_PADRE"])))
+        if r["CED_MADRE"] != 0:
+            pares.append((r["hogar_id"], int(r["CED_MADRE"])))
+    if not pares:
+        return calcular_rangos_quintiles(pd.Series(dtype=float))
+
+    df_mapa = pd.DataFrame(pares, columns=["hogar_id", "fam_id"]).drop_duplicates()
+
+    if empleo.empty:
+        salario_map: dict[int, float] = {}
+    else:
+        emp = empleo.copy()
+        emp["IDENTIFICACION"] = pd.to_numeric(emp["IDENTIFICACION"], errors="coerce")
+        emp = emp.dropna(subset=["IDENTIFICACION"]).copy()
+        emp["IDENTIFICACION"] = emp["IDENTIFICACION"].astype(int)
+        emp["SALARIO"] = pd.to_numeric(emp["SALARIO"], errors="coerce").fillna(0)
+        salario_map = emp.groupby("IDENTIFICACION")["SALARIO"].sum().to_dict()
+
+    df_mapa["salario"] = df_mapa["fam_id"].map(salario_map).fillna(0.0)
+    df_hogares = df_mapa.groupby("hogar_id", as_index=False)["salario"].sum()
+    return calcular_rangos_quintiles(df_hogares["salario"])
 
 
 def _quintil_por_estudiante(
@@ -432,6 +453,13 @@ if "Universidad" in estudiantes.columns:
 else:
     st.warning("La hoja Estudiantes no contiene la columna 'Universidad'.")
 
+titulo_universidad = (
+    universidad_sel
+    if universidad_sel != "Todas las universidades"
+    else "Todas las universidades"
+)
+rango_quintil_opts = ["Ecuador", titulo_universidad, "UDLA"]
+
 c1, c2, c3, c4, c5 = st.columns(5)
 with c1:
     cant_papas_opt = st.selectbox(
@@ -460,7 +488,7 @@ with c4:
 with c5:
     rango_quintil_sel = st.selectbox(
         "Rango de quintil",
-        options=RANGO_QUINTIL_OPTS,
+        options=rango_quintil_opts,
         index=0,
     )
 
@@ -481,7 +509,10 @@ if universo_filtrado.empty:
     st.info("No hay familias que cumplan los filtros seleccionados.")
     st.stop()
 
-rangos_sel = _rangos_por_nombre(rango_quintil_sel)
+rangos_universidad = _calcular_rangos_universidad(universo_filtrado, empleo)
+rangos_sel = _rangos_por_nombre(
+    rango_quintil_sel, titulo_universidad, rangos_universidad
+)
 quintiles_estudiante = _quintil_por_estudiante(universo_filtrado, empleo, rangos_sel)
 if quintiles_estudiante.empty:
     universo_filtrado["grupo_quintil"] = "sin info"

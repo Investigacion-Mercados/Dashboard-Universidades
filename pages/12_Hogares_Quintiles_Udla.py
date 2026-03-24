@@ -41,7 +41,7 @@ def load_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
 
 
 def _select_anio_mes(
-    df: pd.DataFrame, anio_col: str, mes_col: str
+    df: pd.DataFrame, anio_col: str, mes_col: str, label: str
 ) -> tuple[int | None, int | None]:
     if df.empty or anio_col not in df.columns or mes_col not in df.columns:
         return None, None
@@ -56,7 +56,9 @@ def _select_anio_mes(
     if not anios:
         return None, None
 
-    anio = st.selectbox("Anio de empleos (Innova)", options=anios, index=len(anios) - 1)
+    anio = st.selectbox(
+        f"Anio de empleos ({label})", options=anios, index=len(anios) - 1
+    )
     df_anio = df[pd.to_numeric(df[anio_col], errors="coerce").astype("Int64") == anio]
     meses = sorted(
         pd.to_numeric(df_anio[mes_col], errors="coerce")
@@ -68,7 +70,9 @@ def _select_anio_mes(
     if not meses:
         return anio, None
 
-    mes = st.selectbox("Mes de empleos (Innova)", options=meses, index=len(meses) - 1)
+    mes = st.selectbox(
+        f"Mes de empleos ({label})", options=meses, index=len(meses) - 1
+    )
     return anio, mes
 
 
@@ -143,11 +147,9 @@ def _card_html(
     """
 
 
-st.set_page_config(page_title="Quintiles Innova (Rangos UDLA)", page_icon="Q", layout="wide")
-st.title("Quintiles de Hogares Innova con Rangos UDLA")
-st.caption(
-    "Distribucion de hogares Innova usando los rangos de quintiles UDLA."
-)
+st.set_page_config(page_title="Quintiles vs UDLA", page_icon="Q", layout="wide")
+title_placeholder = st.empty()
+caption_placeholder = st.empty()
 
 with st.spinner("Cargando datos..."):
     estudiantes, universo_familiares, empleo = load_data()
@@ -180,8 +182,19 @@ with col_filtro_1:
     else:
         st.warning("La hoja Estudiantes no contiene la columna 'Universidad'.")
 
+titulo_universidad = (
+    universidad_sel
+    if universidad_sel != "Todas las universidades"
+    else "Todas las universidades"
+)
+
+title_placeholder.title(f"Quintiles: {titulo_universidad} vs UDLA")
+caption_placeholder.caption(
+    f"Distribucion de hogares de {titulo_universidad} usando los rangos de quintiles UDLA."
+)
+
 with col_filtro_2:
-    anio_emp, mes_emp = _select_anio_mes(empleo, "ANIO", "MES")
+    anio_emp, mes_emp = _select_anio_mes(empleo, "ANIO", "MES", titulo_universidad)
 
 if anio_emp is None or mes_emp is None:
     st.info("No hay periodo de empleos disponible.")
@@ -192,7 +205,7 @@ if estudiantes_filtrados.empty:
     st.stop()
 
 label_grupo = (
-    f"Hogares {universidad_sel}"
+    f"Hogares {titulo_universidad}"
     if universidad_sel != "Todas las universidades"
     else "Hogares"
 )

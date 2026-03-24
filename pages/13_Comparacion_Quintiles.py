@@ -1,8 +1,8 @@
 """
 Pagina 13 – Comparacion de Quintiles: Universidad vs UDLA
-Compara quintiles de ingreso entre la Universidad (Innova) y UDLA usando
+Compara quintiles de ingreso entre la universidad seleccionada y UDLA usando
 rangos especificos de cada institucion. Muestra que quintil UDLA
-se parece mas a cada quintil de la Universidad segun categorias como
+se parece mas a cada quintil de la universidad segun categorias como
 Deuda, Vulnerabilidad y Ubicacion.
 """
 
@@ -15,6 +15,8 @@ import pandas as pd
 import streamlit as st
 
 from utils.excel_loader import load_excel_sheet
+from utils.quintile_ranges import asignar_quintil_por_rangos, calcular_rangos_quintiles
+from utils.student_columns import normalize_university_column
 from utils.udla_sql import cargar_datos_udla
 from utils.comparacion_helpers import (
     load_ubicacion_periodo,
@@ -33,14 +35,6 @@ from utils.comparacion_helpers import (
 
 # ─── Rangos de quintiles por institucion (mismos de pagina 11) ────────────────
 
-QUINTILES_INNOVA = {
-    1: {"min": 470.00, "max": 482.00},
-    2: {"min": 482.01, "max": 707.07},
-    3: {"min": 707.08, "max": 1104.36},
-    4: {"min": 1104.37, "max": 1856.00},
-    5: {"min": 1856.01, "max": 5011.00},
-}
-
 QUINTILES_UDLA = {
     1: {"min": 105.75, "max": 482.00},
     2: {"min": 482.01, "max": 850.92},
@@ -57,20 +51,7 @@ QUINTIL_ORDER = ["Sin empleo", "1", "2", "3", "4", "5"]
 
 def _asignar_quintil_custom(salario: float, rangos: dict) -> str:
     """Asigna quintil usando rangos personalizados por institucion."""
-    if pd.isna(salario) or float(salario) <= 0:
-        return "Sin empleo"
-    val = float(salario)
-    q_min = rangos[1]["min"]
-    q_max = rangos[5]["max"]
-    if val < q_min:
-        return "1"
-    if val > q_max:
-        return "5"
-    for q in [1, 2, 3, 4, 5]:
-        r = rangos[q]
-        if r["min"] <= val <= r["max"]:
-            return str(q)
-    return "Sin empleo"
+    return asignar_quintil_por_rangos(salario, rangos, vacio="Sin empleo")
 
 
 def _fmt_money(v: float) -> str:
@@ -237,17 +218,7 @@ st.markdown(
 
 # ─── Header ──────────────────────────────────────────────────────────────────
 
-st.markdown(
-    """
-    <div class="header-card">
-        <h1>⚖️ Comparacion de Quintiles: Universidad vs UDLA</h1>
-        <p>Selecciona un quintil de la Universidad como referencia y descubre qué quintil
-        UDLA tiene el perfil socioeconómico más similar según deuda, vulnerabilidad
-        y ubicación.</p>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
+header_placeholder = st.empty()
 
 
 # ─── Selector de año/mes reutilizable ────────────────────────────────────────
@@ -327,6 +298,7 @@ with st.spinner("Cargando datos de la universidad …"):
         estudiantes = estudiantes.rename(columns={"Cedula": "IDENTIFICACION"})
     elif "CEDULA" in estudiantes.columns:
         estudiantes = estudiantes.rename(columns={"CEDULA": "IDENTIFICACION"})
+    estudiantes = normalize_university_column(estudiantes)
 
 with st.spinner("Conectando con SQL UDLA …"):
     udla = cargar_datos_udla()
@@ -344,20 +316,66 @@ if personas_udla.empty or familiares_udla.empty:
 # ─── Filtros principales ─────────────────────────────────────────────────────
 
 st.markdown("#### ⚙️ Filtros principales")
-col_f1, col_f2, col_f3 = st.columns(3)
+col_f1, col_f2, col_f3, col_f4 = st.columns(4)
+
+estudiantes_filtrados = estudiantes
+universidad_sel = "Todas las universidades"
 
 with col_f1:
+    if "Universidad" in estudiantes.columns:
+        universidades_disponibles = sorted(
+            estudiantes["Universidad"].dropna().astype(str).str.strip().unique().tolist()
+        )
+        universidad_sel = st.selectbox(
+            "Universidad",
+            options=["Todas las universidades"] + universidades_disponibles,
+            index=0,
+            key="q13_universidad",
+        )
+        if universidad_sel != "Todas las universidades":
+            estudiantes_filtrados = estudiantes[
+                estudiantes["Universidad"] == universidad_sel
+            ]
+    else:
+        st.warning("La hoja Estudiantes no contiene la columna 'Universidad'.")
+
+titulo_universidad = (
+    universidad_sel
+    if universidad_sel != "Todas las universidades"
+    else "Todas las universidades"
+)
+
+header_placeholder.markdown(
+    f"""
+    <div class="header-card">
+        <h1>⚖️ Comparacion de Quintiles: {titulo_universidad} vs UDLA</h1>
+        <p>Selecciona un quintil de {titulo_universidad} como referencia y descubre qué quintil
+        UDLA tiene el perfil socioeconómico más similar según deuda, vulnerabilidad
+        y ubicación.</p>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+with col_f2:
     quintil_ref_opts = ["Todos"] + QUINTIL_ORDER
     quintil_ref_sel = st.selectbox(
         "Quintil Universidad (referencia)",
         options=quintil_ref_opts,
         format_func=lambda x: (
-            "Todos los hogares" if x == "Todos" else _quintil_display(x, "Universidad")
+            "Todos los hogares"
+            if x == "Todos"
+            else _quintil_display(
+                x,
+                titulo_universidad
+                if universidad_sel != "Todas las universidades"
+                else "Universidades",
+            )
         ),
         index=0,
     )
 
-with col_f2:
+with col_f3:
     grupo_udla = st.selectbox(
         "Grupo UDLA",
         options=["E", "A", "G"],
@@ -369,7 +387,7 @@ with col_f2:
         index=0,
     )
 
-with col_f3:
+with col_f4:
     if "periodo" in personas_udla.columns:
         personas_periodo = personas_udla.copy()
         if "tipo" in personas_periodo.columns:
@@ -420,16 +438,20 @@ for label_check, val in [
         st.info(f"No hay periodo de {label_check}.")
         st.stop()
 
+if estudiantes_filtrados.empty:
+    st.info("No hay estudiantes para la universidad seleccionada.")
+    st.stop()
+
 # ═══════════════════════════════════════════════════════════════════════════════
-# Perfil Universidad – hogares con quintiles personalizados (Innova)
+# Perfil Universidad – hogares con quintiles personalizados
 # ═══════════════════════════════════════════════════════════════════════════════
 
-estudiantes["IDENTIFICACION"] = norm_id(estudiantes["IDENTIFICACION"])
-ids_estudiantes = set(estudiantes["IDENTIFICACION"].unique().tolist())
+estudiantes_filtrados["IDENTIFICACION"] = norm_id(estudiantes_filtrados["IDENTIFICACION"])
+ids_estudiantes = set(estudiantes_filtrados["IDENTIFICACION"].unique().tolist())
 universo_familiares["IDENTIFICACION"] = norm_id(universo_familiares["IDENTIFICACION"])
 
 familias_col, mapa_col = build_familias(
-    estudiantes[["IDENTIFICACION"]].copy(),
+    estudiantes_filtrados[["IDENTIFICACION"]].copy(),
     universo_familiares,
     id_col="IDENTIFICACION",
     padre_col="CED_PADRE",
@@ -452,9 +474,10 @@ if hogares_col.empty:
     st.info("No hay hogares de la universidad con datos suficientes.")
     st.stop()
 
-# Asignar quintil personalizado Innova
+# Asignar quintil dinamico de la universidad segun los hogares filtrados
+rangos_universidad = calcular_rangos_quintiles(hogares_col["salario"])
 hogares_col["quintil_custom"] = hogares_col["salario"].apply(
-    lambda x: _asignar_quintil_custom(x, QUINTILES_INNOVA)
+    lambda x: _asignar_quintil_custom(x, rangos_universidad)
 )
 
 # Mapa estudiante → quintil (para ubicacion)
@@ -554,7 +577,7 @@ if not familias_udla.empty and "hogar_id" in familias_udla.columns:
 
 gdf_parroquias = cargar_parroquias()
 
-# Innova: parroquias por estudiante
+# Universidad: parroquias por estudiante
 info_personal["IDENTIFICACION"] = norm_id(info_personal["IDENTIFICACION"])
 loc_df_col = info_personal[info_personal["IDENTIFICACION"].isin(ids_estudiantes)].copy()
 df_parro_col = pd.DataFrame()
@@ -624,7 +647,7 @@ if all_parro:
         loc_categorias = list(top) + ["Otros"]
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Construir perfiles por quintil – Universidad (Innova)
+# Construir perfiles por quintil – Universidad
 # ═══════════════════════════════════════════════════════════════════════════════
 
 detalles_col_q: dict[str, dict] = {}
@@ -959,9 +982,9 @@ if "sim_ubicacion" in df_result.columns:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 ref_label = (
-    "Todos los hogares de la Universidad"
+    f"Todos los hogares de {titulo_universidad}"
     if quintil_ref_sel == "Todos"
-    else _quintil_display(quintil_ref_sel, "Universidad")
+    else _quintil_display(quintil_ref_sel, titulo_universidad)
 )
 
 tab_ranking, tab_detalle = st.tabs(
@@ -1052,7 +1075,7 @@ with tab_ranking:
 
     st.markdown("---")
     st.caption(
-        "💡 **¿Cómo se calcula?** Se compara el perfil del quintil de referencia de la Universidad "
+        f"💡 **¿Cómo se calcula?** Se compara el perfil del quintil de referencia de {titulo_universidad} "
         "contra cada quintil UDLA usando distancia estandarizada en las categorías seleccionadas. "
         "Los pesos permiten dar mayor importancia a cada categoría."
     )
@@ -1088,7 +1111,7 @@ with tab_detalle:
 
     rango_udla_det = _rango_text(q_label_det, QUINTILES_UDLA) if q_label_det else ""
     rango_col_det = (
-        _rango_text(quintil_ref_sel, QUINTILES_INNOVA)
+        _rango_text(quintil_ref_sel, rangos_universidad)
         if quintil_ref_sel != "Todos"
         else "Todos los rangos"
     )
@@ -1173,7 +1196,7 @@ with tab_detalle:
         '<div class="cat-subtitle">Contexto salarial de los hogares en cada quintil</div>'
         "</div></div>"
         '<div class="metric-row">'
-        + _metric_html("Rango Universidad", rango_col_det, ref_label, COLOR_COL)
+        + _metric_html(f"Rango {titulo_universidad}", rango_col_det, ref_label, COLOR_COL)
         + _metric_html("Rango UDLA", rango_udla_det, grupo_detalle, COLOR_UDLA)
         + "</div>"
         '<div class="metric-row">'
@@ -1388,6 +1411,6 @@ with tab_detalle:
 
     st.markdown("---")
     st.caption(
-        "💡 Las barras comparan las proporciones entre el quintil de la Universidad y el quintil UDLA. "
+        f"💡 Las barras comparan las proporciones entre el quintil de {titulo_universidad} y el quintil UDLA. "
         "El puntaje de similitud indica cuánto se parecen en cada categoría."
     )
