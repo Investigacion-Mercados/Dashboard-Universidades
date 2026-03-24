@@ -15,17 +15,22 @@ if not archivos_excel:
     st.error("No se encontraron archivos Excel en la carpeta db.")
     st.stop()
 
+st.markdown("### Seleccion de fuente de datos")
+st.caption(
+    "En esta pagina eliges el archivo Excel que usara esta ventana del dashboard. "
+    "Las demas paginas trabajaran con la fuente que selecciones aqui."
+)
+
 archivo_activo = get_active_excel_filename()
 indice_actual = (
     archivos_excel.index(archivo_activo) if archivo_activo in archivos_excel else 0
 )
 
-with st.sidebar:
-    archivo_seleccionado = st.selectbox(
-        "Archivo Excel fuente",
-        options=archivos_excel,
-        index=indice_actual,
-        key="dashboard_excel_selector",
-    )
+archivo_seleccionado = st.selectbox(
+    "Archivo Excel fuente",
+    options=archivos_excel,
+    index=indice_actual,
+    key="dashboard_excel_selector",
+)
 
 archivo_activo = set_active_excel_filename(archivo_seleccionado)
