@@ -6,6 +6,7 @@ import sys
 # Añadir utils al path
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), "utils"))
 from excel_loader import load_excel_sheet
+from student_columns import normalize_university_column
 
 # Configuración de la página
 st.set_page_config(
@@ -21,18 +22,8 @@ def _normalizar_identificacion(df, columnas_posibles):
     return df
 
 
-def _normalizar_colegio(df):
-    if "Colegio" not in df.columns:
-        return df
-
-    colegio = df["Colegio"].copy()
-    if colegio.dtype == "O":
-        colegio = colegio.fillna("").astype(str).str.strip()
-        colegio = colegio.replace("", "Sin dato")
-    else:
-        colegio = colegio.fillna("Sin dato")
-
-    return df.assign(Colegio=colegio)
+def _normalizar_universidad(df):
+    return normalize_university_column(df)
 
 
 @st.cache_data
@@ -41,11 +32,11 @@ def load_estudiantes():
     df_estudiantes = _normalizar_identificacion(
         df_estudiantes, ["IDENTIFICACION", "Cedula", "CEDULA"]
     )
-    return _normalizar_colegio(df_estudiantes)
+    return _normalizar_universidad(df_estudiantes)
 
 
 @st.cache_data
-def calcular_primera_generacion(colegio_sel="Todos los colegios"):
+def calcular_primera_generacion(universidad_sel="Todas las universidades"):
     """
     Calcula el porcentaje de estudiantes que son primera generación de universitarios.
 
@@ -54,8 +45,11 @@ def calcular_primera_generacion(colegio_sel="Todos los colegios"):
     """
     # Cargar datos
     df_estudiantes = load_estudiantes()
-    if colegio_sel != "Todos los colegios" and "Colegio" in df_estudiantes.columns:
-        df_estudiantes = df_estudiantes[df_estudiantes["Colegio"] == colegio_sel]
+    if (
+        universidad_sel != "Todas las universidades"
+        and "Universidad" in df_estudiantes.columns
+    ):
+        df_estudiantes = df_estudiantes[df_estudiantes["Universidad"] == universidad_sel]
     df_familiares = load_excel_sheet("Universo Familiares", "data.xlsx")
     df_info = load_excel_sheet("Informacion Personal", "data.xlsx")
 
@@ -113,22 +107,22 @@ def calcular_primera_generacion(colegio_sel="Todos los colegios"):
 
 try:
     df_estudiantes = load_estudiantes()
-    colegio_sel = "Todos los colegios"
+    universidad_sel = "Todas las universidades"
 
-    if "Colegio" in df_estudiantes.columns:
-        colegios_disponibles = sorted(
-            df_estudiantes["Colegio"].dropna().astype(str).str.strip().unique().tolist()
+    if "Universidad" in df_estudiantes.columns:
+        universidades_disponibles = sorted(
+            df_estudiantes["Universidad"].dropna().astype(str).str.strip().unique().tolist()
         )
-        colegio_sel = st.selectbox(
-            "Colegio",
-            options=["Todos los colegios"] + colegios_disponibles,
+        universidad_sel = st.selectbox(
+            "Universidad",
+            options=["Todas las universidades"] + universidades_disponibles,
             index=0,
         )
     else:
-        st.warning("La hoja Estudiantes no contiene la columna 'Colegio'.")
+        st.warning("La hoja Estudiantes no contiene la columna 'Universidad'.")
 
     primera_gen, no_primera_gen, pct_primera, pct_no_primera, total = (
-        calcular_primera_generacion(colegio_sel)
+        calcular_primera_generacion(universidad_sel)
     )
 
     # Mostrar en dos columnas con tarjetas

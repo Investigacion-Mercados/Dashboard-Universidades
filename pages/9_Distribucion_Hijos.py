@@ -5,6 +5,7 @@ import streamlit as st
 from scipy.stats import gaussian_kde
 
 from utils.excel_loader import load_excel_sheet
+from utils.student_columns import normalize_university_column
 
 
 st.set_page_config(page_title="Distribucion de hijos", layout="wide")
@@ -12,18 +13,8 @@ st.title("Distribucion de hijos")
 st.caption("Estudiantes - Familiares (cantidad de hijos).")
 
 
-def _normalizar_colegio(df: pd.DataFrame) -> pd.DataFrame:
-    if "Colegio" not in df.columns:
-        return df
-
-    colegio = df["Colegio"].copy()
-    if colegio.dtype == "O":
-        colegio = colegio.fillna("").astype(str).str.strip()
-        colegio = colegio.replace("", "Sin dato")
-    else:
-        colegio = colegio.fillna("Sin dato")
-
-    return df.assign(Colegio=colegio)
+def _normalizar_universidad(df: pd.DataFrame) -> pd.DataFrame:
+    return normalize_university_column(df)
 
 
 @st.cache_data(show_spinner=False)
@@ -36,7 +27,7 @@ def load_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         estudiantes = estudiantes.rename(columns={"Cedula": "IDENTIFICACION"})
     elif "CEDULA" in estudiantes.columns:
         estudiantes = estudiantes.rename(columns={"CEDULA": "IDENTIFICACION"})
-    estudiantes = _normalizar_colegio(estudiantes)
+    estudiantes = _normalizar_universidad(estudiantes)
 
     return estudiantes, universo_familiares, info_personal
 
@@ -114,20 +105,20 @@ with st.spinner("Cargando datos..."):
     estudiantes, universo_familiares, info_personal = load_data()
 
 estudiantes_filtrados = estudiantes
-if "Colegio" in estudiantes.columns:
-    colegios_disponibles = sorted(
-        estudiantes["Colegio"].dropna().astype(str).str.strip().unique().tolist()
+if "Universidad" in estudiantes.columns:
+    universidades_disponibles = sorted(
+        estudiantes["Universidad"].dropna().astype(str).str.strip().unique().tolist()
     )
-    colegio_sel = st.selectbox(
-        "Colegio",
-        options=["Todos los colegios"] + colegios_disponibles,
+    universidad_sel = st.selectbox(
+        "Universidad",
+        options=["Todas las universidades"] + universidades_disponibles,
         index=0,
     )
 
-    if colegio_sel != "Todos los colegios":
-        estudiantes_filtrados = estudiantes[estudiantes["Colegio"] == colegio_sel]
+    if universidad_sel != "Todas las universidades":
+        estudiantes_filtrados = estudiantes[estudiantes["Universidad"] == universidad_sel]
 else:
-    st.warning("La hoja Estudiantes no contiene la columna 'Colegio'.")
+    st.warning("La hoja Estudiantes no contiene la columna 'Universidad'.")
 
 ids_estudiantes = _extraer_ids_estudiantes(estudiantes_filtrados)
 ids_familiares = _extraer_ids_familiares(universo_familiares, ids_estudiantes)

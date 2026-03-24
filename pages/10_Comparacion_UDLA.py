@@ -165,7 +165,7 @@ st.markdown(
     <div class="header-card">
         <h1>🔍 Comparacion de Perfiles vs UDLA</h1>
         <p>Configura filtros y pesos para encontrar las carreras o facultades UDLA
-        con perfil socioeconómico más similar al del colegio.</p>
+        con perfil socioeconómico más similar al de la universidad.</p>
     </div>
     """,
     unsafe_allow_html=True,
@@ -239,7 +239,7 @@ def _norm_period(value) -> str:
 
 # ─── Carga de datos ──────────────────────────────────────────────────────────
 
-with st.spinner("Cargando datos del colegio …"):
+with st.spinner("Cargando datos de la universidad …"):
     estudiantes = load_excel_sheet("Estudiantes")
     universo_familiares = load_excel_sheet("Universo Familiares")
     empleo = load_excel_sheet("Empleos")
@@ -302,9 +302,13 @@ with col_f3:
 with st.expander("📅 Ajustes de periodo", expanded=False):
     c1, c2 = st.columns(2)
     with c1:
-        anio_emp, mes_emp = _select_anio_mes(empleo, "ANIO", "MES", "Empleos (Colegio)")
+        anio_emp, mes_emp = _select_anio_mes(
+            empleo, "ANIO", "MES", "Empleos (Universidad)"
+        )
     with c2:
-        anio_deu, mes_deu = _select_anio_mes(deudas, "ANIO", "MES", "Deudas (Colegio)")
+        anio_deu, mes_deu = _select_anio_mes(
+            deudas, "ANIO", "MES", "Deudas (Universidad)"
+        )
     c3, c4 = st.columns(2)
     with c3:
         anio_ing_udla, mes_ing_udla = _select_anio_mes(
@@ -316,8 +320,8 @@ with st.expander("📅 Ajustes de periodo", expanded=False):
         )
 
 for label_check, val in [
-    ("empleos del colegio", (anio_emp, mes_emp)),
-    ("deudas del colegio", (anio_deu, mes_deu)),
+    ("empleos de la universidad", (anio_emp, mes_emp)),
+    ("deudas de la universidad", (anio_deu, mes_deu)),
     ("ingresos UDLA", (anio_ing_udla, mes_ing_udla)),
     ("deudas UDLA", (anio_deu_udla, mes_deu_udla)),
 ]:
@@ -326,7 +330,7 @@ for label_check, val in [
         st.stop()
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Perfil colegio
+# Perfil universidad
 # ═══════════════════════════════════════════════════════════════════════════════
 
 estudiantes["IDENTIFICACION"] = norm_id(estudiantes["IDENTIFICACION"])
@@ -850,7 +854,7 @@ with tab_detalle:
     def _legend() -> str:
         return (
             f'<div class="legend-row">'
-            f'<div class="legend-item"><div class="legend-dot" style="background:{COLOR_COL};"></div>Colegio</div>'
+            f'<div class="legend-item"><div class="legend-dot" style="background:{COLOR_COL};"></div>Universidad</div>'
             f'<div class="legend-item"><div class="legend-dot" style="background:{COLOR_UDLA};"></div>{grupo_detalle}</div>'
             f"</div>"
         )
@@ -881,7 +885,7 @@ with tab_detalle:
                 else 0
             )
             c_udla = int(round(total_hog_g * (v_udla / 100))) if total_hog_g > 0 else 0
-            t_col = f"Colegio: {v_col:.1f}% ({c_col}/{total_hogares_col})"
+            t_col = f"Universidad: {v_col:.1f}% ({c_col}/{total_hogares_col})"
             t_udla = f"{grupo_detalle}: {v_udla:.1f}% ({c_udla}/{total_hog_g})"
             bars_html += _dual_bar(
                 q_label,
@@ -943,7 +947,7 @@ with tab_detalle:
             "</div>" + sim_d_html + "</div>"
             '<div class="metric-row">'
             + _metric_html(
-                "Deuda promedio", f"${deuda_avg_col:,.0f}", "Colegio", COLOR_COL
+                "Deuda promedio", f"${deuda_avg_col:,.0f}", "Universidad", COLOR_COL
             )
             + _metric_html(
                 "Deuda promedio", f"${d_avg_g:,.0f}", grupo_detalle, COLOR_UDLA
@@ -951,7 +955,7 @@ with tab_detalle:
             + "</div>"
             '<div class="metric-row">'
             + _metric_html(
-                "Hogares con deuda", f"{deuda_pct_col*100:.1f}%", "Colegio", COLOR_COL
+                "Hogares con deuda", f"{deuda_pct_col*100:.1f}%", "Universidad", COLOR_COL
             )
             + _metric_html(
                 "Hogares con deuda", f"{d_pct_g*100:.1f}%", grupo_detalle, COLOR_UDLA
@@ -981,7 +985,7 @@ with tab_detalle:
             v_col,
             v_udla,
             max_val=100,
-            tooltip_col=f"Colegio: {v_col:.1f}% ({c_col}/{total_vuln_col})",
+            tooltip_col=f"Universidad: {v_col:.1f}% ({c_col}/{total_vuln_col})",
             tooltip_udla=f"{grupo_detalle}: {v_udla:.1f}% ({c_udla}/{total_est_sel})",
         )
 
@@ -996,7 +1000,7 @@ with tab_detalle:
             r_col,
             r_udla,
             max_val=100,
-            tooltip_col=f"Colegio: {r_col:.1f}% ({c_col_r}/{total_vuln_col})",
+            tooltip_col=f"Universidad: {r_col:.1f}% ({c_col_r}/{total_vuln_col})",
             tooltip_udla=f"{grupo_detalle}: {r_udla:.1f}% ({c_udla_r}/{total_est_sel})",
         )
 
@@ -1022,13 +1026,16 @@ with tab_detalle:
             + _legend()
             + '<div class="metric-row">'
             + _metric_html(
-                "% Vulnerables", f"{vulnerable_pct_col*100:.1f}%", "Colegio", COLOR_COL
+                "% Vulnerables",
+                f"{vulnerable_pct_col*100:.1f}%",
+                "Universidad",
+                COLOR_COL,
             )
             + _metric_html(
                 "% Vulnerables", f"{v_pct_g*100:.1f}%", grupo_detalle, COLOR_UDLA
             )
             + _metric_html(
-                "% En riesgo", f"{riesgo_pct_col*100:.1f}%", "Colegio", COLOR_COL
+                "% En riesgo", f"{riesgo_pct_col*100:.1f}%", "Universidad", COLOR_COL
             )
             + _metric_html(
                 "% En riesgo", f"{r_pct_g*100:.1f}%", grupo_detalle, COLOR_UDLA
@@ -1059,7 +1066,7 @@ with tab_detalle:
                     int(round(total_loc_col * (v_c / 100))) if total_loc_col > 0 else 0
                 )
                 c_u = int(round(loc_total_g * (v_u / 100))) if loc_total_g > 0 else 0
-                t_c = f"Colegio: {v_c:.1f}% ({c_c}/{total_loc_col})"
+                t_c = f"Universidad: {v_c:.1f}% ({c_c}/{total_loc_col})"
                 t_u = f"{grupo_detalle}: {v_u:.1f}% ({c_u}/{loc_total_g})"
                 bars_loc += _dual_bar(
                     parr, v_c, v_u, max_val=100, tooltip_col=t_c, tooltip_udla=t_u
@@ -1090,5 +1097,5 @@ with tab_detalle:
     st.markdown("---")
     st.caption(
         "💡 Las barras muestran la proporcion en cada dimension. "
-        "El puntaje de similitud indica cuanto se parece cada categoria entre el colegio y el grupo UDLA."
+        "El puntaje de similitud indica cuanto se parece cada categoria entre la universidad y el grupo UDLA."
     )

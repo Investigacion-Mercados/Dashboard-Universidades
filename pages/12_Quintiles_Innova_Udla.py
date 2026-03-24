@@ -5,6 +5,7 @@ import streamlit as st
 
 from utils.comparacion_helpers import build_familias, norm_id, salario_por_id
 from utils.excel_loader import load_excel_sheet
+from utils.student_columns import normalize_university_column
 
 
 QUINTIL_ORDER = ["Sin empleo", "1", "2", "3", "4", "5"]
@@ -19,18 +20,8 @@ QUINTILES_UDLA = {
 }
 
 
-def _normalizar_colegio(df: pd.DataFrame) -> pd.DataFrame:
-    if "Colegio" not in df.columns:
-        return df
-
-    colegio = df["Colegio"].copy()
-    if colegio.dtype == "O":
-        colegio = colegio.fillna("").astype(str).str.strip()
-        colegio = colegio.replace("", "Sin dato")
-    else:
-        colegio = colegio.fillna("Sin dato")
-
-    return df.assign(Colegio=colegio)
+def _normalizar_universidad(df: pd.DataFrame) -> pd.DataFrame:
+    return normalize_university_column(df)
 
 
 @st.cache_data(show_spinner=False)
@@ -44,7 +35,7 @@ def load_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     elif "CEDULA" in estudiantes.columns:
         estudiantes = estudiantes.rename(columns={"CEDULA": "IDENTIFICACION"})
 
-    estudiantes = _normalizar_colegio(estudiantes)
+    estudiantes = _normalizar_universidad(estudiantes)
 
     return estudiantes, universo_familiares, empleo
 
@@ -171,23 +162,23 @@ universo_familiares["IDENTIFICACION"] = norm_id(universo_familiares["IDENTIFICAC
 st.markdown("### Filtros")
 col_filtro_1, col_filtro_2 = st.columns(2)
 estudiantes_filtrados = estudiantes
-colegio_sel = "Todos los colegios"
+universidad_sel = "Todas las universidades"
 
 with col_filtro_1:
-    if "Colegio" in estudiantes.columns:
-        colegios_disponibles = sorted(
-            estudiantes["Colegio"].dropna().astype(str).str.strip().unique().tolist()
+    if "Universidad" in estudiantes.columns:
+        universidades_disponibles = sorted(
+            estudiantes["Universidad"].dropna().astype(str).str.strip().unique().tolist()
         )
-        colegio_sel = st.selectbox(
-            "Colegio",
-            options=["Todos los colegios"] + colegios_disponibles,
+        universidad_sel = st.selectbox(
+            "Universidad",
+            options=["Todas las universidades"] + universidades_disponibles,
             index=0,
         )
 
-        if colegio_sel != "Todos los colegios":
-            estudiantes_filtrados = estudiantes[estudiantes["Colegio"] == colegio_sel]
+        if universidad_sel != "Todas las universidades":
+            estudiantes_filtrados = estudiantes[estudiantes["Universidad"] == universidad_sel]
     else:
-        st.warning("La hoja Estudiantes no contiene la columna 'Colegio'.")
+        st.warning("La hoja Estudiantes no contiene la columna 'Universidad'.")
 
 with col_filtro_2:
     anio_emp, mes_emp = _select_anio_mes(empleo, "ANIO", "MES")
@@ -197,11 +188,13 @@ if anio_emp is None or mes_emp is None:
     st.stop()
 
 if estudiantes_filtrados.empty:
-    st.info("No hay estudiantes para el colegio seleccionado.")
+    st.info("No hay estudiantes para la universidad seleccionada.")
     st.stop()
 
 label_grupo = (
-    f"Hogares {colegio_sel}" if colegio_sel != "Todos los colegios" else "Hogares"
+    f"Hogares {universidad_sel}"
+    if universidad_sel != "Todas las universidades"
+    else "Hogares"
 )
 
 familias_i, mapa_i = build_familias(

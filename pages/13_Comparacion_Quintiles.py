@@ -1,8 +1,8 @@
 """
-Pagina 13 – Comparacion de Quintiles: Colegio vs UDLA
-Compara quintiles de ingreso entre el Colegio (Innova) y UDLA usando
+Pagina 13 – Comparacion de Quintiles: Universidad vs UDLA
+Compara quintiles de ingreso entre la Universidad (Innova) y UDLA usando
 rangos especificos de cada institucion. Muestra que quintil UDLA
-se parece mas a cada quintil del Colegio segun categorias como
+se parece mas a cada quintil de la Universidad segun categorias como
 Deuda, Vulnerabilidad y Ubicacion.
 """
 
@@ -240,8 +240,8 @@ st.markdown(
 st.markdown(
     """
     <div class="header-card">
-        <h1>⚖️ Comparacion de Quintiles: Colegio vs UDLA</h1>
-        <p>Selecciona un quintil del Colegio como referencia y descubre qué quintil
+        <h1>⚖️ Comparacion de Quintiles: Universidad vs UDLA</h1>
+        <p>Selecciona un quintil de la Universidad como referencia y descubre qué quintil
         UDLA tiene el perfil socioeconómico más similar según deuda, vulnerabilidad
         y ubicación.</p>
     </div>
@@ -317,7 +317,7 @@ def _norm_period(value) -> str:
 
 # ─── Carga de datos ──────────────────────────────────────────────────────────
 
-with st.spinner("Cargando datos del colegio …"):
+with st.spinner("Cargando datos de la universidad …"):
     estudiantes = load_excel_sheet("Estudiantes")
     universo_familiares = load_excel_sheet("Universo Familiares")
     empleo = load_excel_sheet("Empleos")
@@ -349,10 +349,10 @@ col_f1, col_f2, col_f3 = st.columns(3)
 with col_f1:
     quintil_ref_opts = ["Todos"] + QUINTIL_ORDER
     quintil_ref_sel = st.selectbox(
-        "Quintil Colegio (referencia)",
+        "Quintil Universidad (referencia)",
         options=quintil_ref_opts,
         format_func=lambda x: (
-            "Todos los hogares" if x == "Todos" else _quintil_display(x, "Colegio")
+            "Todos los hogares" if x == "Todos" else _quintil_display(x, "Universidad")
         ),
         index=0,
     )
@@ -393,9 +393,13 @@ with col_f3:
 with st.expander("📅 Ajustes de periodo", expanded=False):
     c1, c2 = st.columns(2)
     with c1:
-        anio_emp, mes_emp = _select_anio_mes(empleo, "ANIO", "MES", "Empleos (Colegio)")
+        anio_emp, mes_emp = _select_anio_mes(
+            empleo, "ANIO", "MES", "Empleos (Universidad)"
+        )
     with c2:
-        anio_deu, mes_deu = _select_anio_mes(deudas, "ANIO", "MES", "Deudas (Colegio)")
+        anio_deu, mes_deu = _select_anio_mes(
+            deudas, "ANIO", "MES", "Deudas (Universidad)"
+        )
     c3, c4 = st.columns(2)
     with c3:
         anio_ing_udla, mes_ing_udla = _select_anio_mes(
@@ -407,8 +411,8 @@ with st.expander("📅 Ajustes de periodo", expanded=False):
         )
 
 for label_check, val in [
-    ("empleos del colegio", (anio_emp, mes_emp)),
-    ("deudas del colegio", (anio_deu, mes_deu)),
+    ("empleos de la universidad", (anio_emp, mes_emp)),
+    ("deudas de la universidad", (anio_deu, mes_deu)),
     ("ingresos UDLA", (anio_ing_udla, mes_ing_udla)),
     ("deudas UDLA", (anio_deu_udla, mes_deu_udla)),
 ]:
@@ -417,7 +421,7 @@ for label_check, val in [
         st.stop()
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Perfil Colegio – hogares con quintiles personalizados (Innova)
+# Perfil Universidad – hogares con quintiles personalizados (Innova)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 estudiantes["IDENTIFICACION"] = norm_id(estudiantes["IDENTIFICACION"])
@@ -445,7 +449,7 @@ deuda_map_col = deuda_por_id(deu_col, "IDENTIFICACION", "VALOR")
 hogares_col = hogares_salario_deuda(mapa_col, salario_map_col, deuda_map_col)
 
 if hogares_col.empty:
-    st.info("No hay hogares del colegio con datos suficientes.")
+    st.info("No hay hogares de la universidad con datos suficientes.")
     st.stop()
 
 # Asignar quintil personalizado Innova
@@ -620,7 +624,7 @@ if all_parro:
         loc_categorias = list(top) + ["Otros"]
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Construir perfiles por quintil – Colegio (Innova)
+# Construir perfiles por quintil – Universidad (Innova)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 detalles_col_q: dict[str, dict] = {}
@@ -955,9 +959,9 @@ if "sim_ubicacion" in df_result.columns:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 ref_label = (
-    "Todos los hogares del Colegio"
+    "Todos los hogares de la Universidad"
     if quintil_ref_sel == "Todos"
-    else _quintil_display(quintil_ref_sel, "Colegio")
+    else _quintil_display(quintil_ref_sel, "Universidad")
 )
 
 tab_ranking, tab_detalle = st.tabs(
@@ -1048,7 +1052,7 @@ with tab_ranking:
 
     st.markdown("---")
     st.caption(
-        "💡 **¿Cómo se calcula?** Se compara el perfil del quintil de referencia del Colegio "
+        "💡 **¿Cómo se calcula?** Se compara el perfil del quintil de referencia de la Universidad "
         "contra cada quintil UDLA usando distancia estandarizada en las categorías seleccionadas. "
         "Los pesos permiten dar mayor importancia a cada categoría."
     )
@@ -1169,7 +1173,7 @@ with tab_detalle:
         '<div class="cat-subtitle">Contexto salarial de los hogares en cada quintil</div>'
         "</div></div>"
         '<div class="metric-row">'
-        + _metric_html("Rango Colegio", rango_col_det, ref_label, COLOR_COL)
+        + _metric_html("Rango Universidad", rango_col_det, ref_label, COLOR_COL)
         + _metric_html("Rango UDLA", rango_udla_det, grupo_detalle, COLOR_UDLA)
         + "</div>"
         '<div class="metric-row">'
@@ -1384,6 +1388,6 @@ with tab_detalle:
 
     st.markdown("---")
     st.caption(
-        "💡 Las barras comparan las proporciones entre el quintil del Colegio y el quintil UDLA. "
+        "💡 Las barras comparan las proporciones entre el quintil de la Universidad y el quintil UDLA. "
         "El puntaje de similitud indica cuánto se parecen en cada categoría."
     )

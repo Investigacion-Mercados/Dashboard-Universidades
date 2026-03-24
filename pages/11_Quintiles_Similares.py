@@ -8,6 +8,7 @@ import streamlit as st
 
 from utils.comparacion_helpers import build_familias, norm_id, salario_por_id
 from utils.excel_loader import load_excel_sheet
+from utils.student_columns import normalize_university_column
 from utils.udla_sql import cargar_datos_udla
 
 QUINTIL_ORDER = ["Sin empleo", "1", "2", "3", "4", "5"]
@@ -29,18 +30,8 @@ QUINTILES_UDLA = {
 }
 
 
-def _normalizar_colegio(df: pd.DataFrame) -> pd.DataFrame:
-    if "Colegio" not in df.columns:
-        return df
-
-    colegio = df["Colegio"].copy()
-    if colegio.dtype == "O":
-        colegio = colegio.fillna("").astype(str).str.strip()
-        colegio = colegio.replace("", "Sin dato")
-    else:
-        colegio = colegio.fillna("Sin dato")
-
-    return df.assign(Colegio=colegio)
+def _normalizar_universidad(df: pd.DataFrame) -> pd.DataFrame:
+    return normalize_university_column(df)
 
 
 def _norm_period(value) -> str:
@@ -199,7 +190,7 @@ familiares_udla = udla.get("Familiares", pd.DataFrame())
 ingresos_udla = udla.get("Ingresos", pd.DataFrame())
 
 if estudiantes.empty or universo_familiares.empty or empleo.empty:
-    st.info("No hay datos suficientes del colegio para calcular quintiles.")
+    st.info("No hay datos suficientes de la universidad para calcular quintiles.")
     st.stop()
 if personas_udla.empty or familiares_udla.empty or ingresos_udla.empty:
     st.info("No hay datos suficientes de UDLA para calcular quintiles.")
@@ -210,7 +201,7 @@ if "Cedula" in estudiantes.columns:
 elif "CEDULA" in estudiantes.columns:
     estudiantes = estudiantes.rename(columns={"CEDULA": "IDENTIFICACION"})
 
-estudiantes = _normalizar_colegio(estudiantes)
+estudiantes = _normalizar_universidad(estudiantes)
 estudiantes["IDENTIFICACION"] = norm_id(estudiantes["IDENTIFICACION"])
 universo_familiares["IDENTIFICACION"] = norm_id(universo_familiares["IDENTIFICACION"])
 
@@ -227,22 +218,22 @@ ingresos_udla["salario"] = pd.to_numeric(ingresos_udla["salario"], errors="coerc
 st.markdown("### Filtros")
 f1, f2, f3 = st.columns(3)
 estudiantes_filtrados = estudiantes
-colegio_sel = "Todos los colegios"
+universidad_sel = "Todas las universidades"
 with f1:
-    if "Colegio" in estudiantes.columns:
-        colegios_disponibles = sorted(
-            estudiantes["Colegio"].dropna().astype(str).str.strip().unique().tolist()
+    if "Universidad" in estudiantes.columns:
+        universidades_disponibles = sorted(
+            estudiantes["Universidad"].dropna().astype(str).str.strip().unique().tolist()
         )
-        colegio_sel = st.selectbox(
-            "Colegio",
-            options=["Todos los colegios"] + colegios_disponibles,
+        universidad_sel = st.selectbox(
+            "Universidad",
+            options=["Todas las universidades"] + universidades_disponibles,
             index=0,
         )
 
-        if colegio_sel != "Todos los colegios":
-            estudiantes_filtrados = estudiantes[estudiantes["Colegio"] == colegio_sel]
+        if universidad_sel != "Todas las universidades":
+            estudiantes_filtrados = estudiantes[estudiantes["Universidad"] == universidad_sel]
     else:
-        st.warning("La hoja Estudiantes no contiene la columna 'Colegio'.")
+        st.warning("La hoja Estudiantes no contiene la columna 'Universidad'.")
 
 with f2:
     tipo_udla = st.selectbox(
@@ -275,7 +266,7 @@ with st.expander("Ajustes de periodo de ingresos", expanded=False):
     c1, c2 = st.columns(2)
     with c1:
         anio_emp, mes_emp = _select_anio_mes(
-            empleo, "ANIO", "MES", "Empleos Colegio", "colegio"
+            empleo, "ANIO", "MES", "Empleos Universidad", "universidad"
         )
     with c2:
         anio_ing_u, mes_ing_u = _select_anio_mes(
@@ -283,19 +274,21 @@ with st.expander("Ajustes de periodo de ingresos", expanded=False):
         )
 
 if anio_emp is None or mes_emp is None:
-    st.info("No hay periodo de empleos del colegio disponible.")
+    st.info("No hay periodo de empleos de la universidad disponible.")
     st.stop()
 if anio_ing_u is None or mes_ing_u is None:
     st.info("No hay periodo de ingresos UDLA disponible.")
     st.stop()
 
 if estudiantes_filtrados.empty:
-    st.info("No hay estudiantes para el colegio seleccionado.")
+    st.info("No hay estudiantes para la universidad seleccionada.")
     st.stop()
 
-label_local = colegio_sel if colegio_sel != "Todos los colegios" else "Colegios"
+label_local = (
+    universidad_sel if universidad_sel != "Todas las universidades" else "Universidades"
+)
 
-# Colegio: hogares por familiares de estudiantes
+# Universidad: hogares por familiares de estudiantes
 familias_i, mapa_i = build_familias(
     estudiantes_filtrados[["IDENTIFICACION"]].copy(),
     universo_familiares,
@@ -339,19 +332,19 @@ hogares_u["quintil"] = hogares_u["salario"].apply(
     lambda x: _asignar_quintil_custom(x, QUINTILES_UDLA)
 )
 
-res_i = _resumen_quintiles(hogares_i, "colegio")
+res_i = _resumen_quintiles(hogares_i, "universidad")
 res_u = _resumen_quintiles(hogares_u, "udla")
 
 res = res_i.merge(res_u, on="quintil", how="outer").fillna(0)
-res["hogares_colegio"] = res["hogares_colegio"].astype(int)
+res["hogares_universidad"] = res["hogares_universidad"].astype(int)
 res["hogares_udla"] = res["hogares_udla"].astype(int)
 
 chart_df = pd.DataFrame(
     {
         "quintil": QUINTIL_ORDER + QUINTIL_ORDER,
         "grupo": [label_local] * len(QUINTIL_ORDER) + ["UDLA"] * len(QUINTIL_ORDER),
-        "porcentaje": res["pct_colegio"].tolist() + res["pct_udla"].tolist(),
-        "hogares": res["hogares_colegio"].tolist() + res["hogares_udla"].tolist(),
+        "porcentaje": res["pct_universidad"].tolist() + res["pct_udla"].tolist(),
+        "hogares": res["hogares_universidad"].tolist() + res["hogares_udla"].tolist(),
     }
 )
 
@@ -382,8 +375,8 @@ for q in QUINTIL_ORDER:
     cards.append(
         {
             "quintil": q,
-            "hog_i": int(row["hogares_colegio"]),
-            "pct_i": float(row["pct_colegio"]),
+            "hog_i": int(row["hogares_universidad"]),
+            "pct_i": float(row["pct_universidad"]),
             "hog_u": int(row["hogares_udla"]),
             "pct_u": float(row["pct_udla"]),
             "rango_i": _rango_text(q, QUINTILES_INNOVA),
@@ -426,7 +419,7 @@ for i in range(0, len(cards), 2):
             )
 
 comp = res[res["quintil"].isin(["1", "2", "3", "4", "5"])].copy()
-comp["dif_pp"] = (comp["pct_colegio"] - comp["pct_udla"]).abs()
+comp["dif_pp"] = (comp["pct_universidad"] - comp["pct_udla"]).abs()
 comp["similitud"] = 100.0 - comp["dif_pp"]
 best = comp.sort_values(["dif_pp", "quintil"], ascending=[True, True]).iloc[0]
 

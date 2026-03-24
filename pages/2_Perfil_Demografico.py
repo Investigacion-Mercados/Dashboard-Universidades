@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from utils.excel_loader import load_excel_sheet
+from utils.student_columns import normalize_university_column
 
 st.set_page_config(page_title="Perfil Demográfico", page_icon="👥", layout="wide")
 
@@ -35,18 +36,8 @@ def _normalizar_identificacion(df, columnas_posibles):
     return df
 
 
-def _normalizar_colegio(df):
-    if "Colegio" not in df.columns:
-        return df
-
-    colegio = df["Colegio"].copy()
-    if colegio.dtype == "O":
-        colegio = colegio.fillna("").astype(str).str.strip()
-        colegio = colegio.replace("", "Sin dato")
-    else:
-        colegio = colegio.fillna("Sin dato")
-
-    return df.assign(Colegio=colegio)
+def _normalizar_universidad(df):
+    return normalize_university_column(df)
 
 
 def _normalizar_tipo(df):
@@ -95,7 +86,7 @@ def load_data():
     estudiantes = _normalizar_identificacion(
         estudiantes, ["IDENTIFICACION", "Cedula", "CEDULA"]
     )
-    estudiantes = _normalizar_colegio(estudiantes)
+    estudiantes = _normalizar_universidad(estudiantes)
     estudiantes = _normalizar_tipo(estudiantes)
 
     return estudiantes, universo_familiares, empleo, info_personal
@@ -386,26 +377,26 @@ with st.spinner("Cargando datos..."):
     estudiantes_df, universo_fam_df, empleo_df, info_personal_df = load_data()
 
 col_filtro_1, col_filtro_2 = st.columns(2)
-colegio_sel = "Todos los colegios"
+universidad_sel = "Todas las universidades"
 
 with col_filtro_1:
     estudiantes_filtrados = estudiantes_df
-    if "Colegio" in estudiantes_df.columns:
-        colegios_disponibles = sorted(
-            estudiantes_df["Colegio"].dropna().astype(str).str.strip().unique().tolist()
+    if "Universidad" in estudiantes_df.columns:
+        universidades_disponibles = sorted(
+            estudiantes_df["Universidad"].dropna().astype(str).str.strip().unique().tolist()
         )
-        colegio_sel = st.selectbox(
-            "Colegio",
-            options=["Todos los colegios"] + colegios_disponibles,
+        universidad_sel = st.selectbox(
+            "Universidad",
+            options=["Todas las universidades"] + universidades_disponibles,
             index=0,
         )
 
-        if colegio_sel != "Todos los colegios":
+        if universidad_sel != "Todas las universidades":
             estudiantes_filtrados = estudiantes_df[
-                estudiantes_df["Colegio"] == colegio_sel
+                estudiantes_df["Universidad"] == universidad_sel
             ]
     else:
-        st.warning("La hoja Estudiantes no contiene la columna 'Colegio'.")
+        st.warning("La hoja Estudiantes no contiene la columna 'Universidad'.")
 
 with col_filtro_2:
     quintil_sel = st.selectbox(
@@ -432,9 +423,9 @@ with st.spinner("Calculando métricas..."):
     )
 
 tiene_solo_innova = (
-    "Colegio" in estudiantes_filtrados.columns
+    "Universidad" in estudiantes_filtrados.columns
     and not estudiantes_filtrados.empty
-    and estudiantes_filtrados["Colegio"].astype(str).str.strip().eq("INNOVA").all()
+    and estudiantes_filtrados["Universidad"].astype(str).str.strip().eq("INNOVA").all()
 )
 mostrar_desglose_tipo = "Tipo" in estudiantes_filtrados.columns and not tiene_solo_innova
 

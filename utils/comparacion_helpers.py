@@ -380,7 +380,7 @@ def calcular_similitud(
     cat_weights: dict[str, float] | None = None,
 ) -> pd.DataFrame:
     """
-    Calcula puntaje de similitud entre el colegio y cada grupo UDLA.
+    Calcula puntaje de similitud entre la universidad y cada grupo UDLA.
     El puntaje total es un promedio ponderado de las similitudes por categoria.
     """
     df_feat = df_perfiles.copy()
