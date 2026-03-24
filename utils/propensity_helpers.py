@@ -207,6 +207,12 @@ def _prepare_students(
         unidad_academica = unidad_academica.where(unidad_academica != "", area)
     students["unidad_academica"] = unidad_academica.replace("", "Sin dato")
 
+    students["tipo_estudiante"] = (
+        students["TIPO"].fillna("").astype(str).str.strip().str.upper()
+        if "TIPO" in students.columns
+        else ""
+    )
+
     return students[
         [
             "IDENTIFICACION",
@@ -214,6 +220,7 @@ def _prepare_students(
             "GENERO_CANON",
             "carrera",
             "unidad_academica",
+            "tipo_estudiante",
         ]
     ].copy()
 
@@ -722,6 +729,7 @@ def build_student_feature_base() -> tuple[pd.DataFrame, dict[str, dict[int, dict
                     "riesgo_deuda_hogar_score",
                     "sin_empleo_formal",
                     "en_riesgo",
+                    "tipo_estudiante",
                 ]
             ].copy()
         )
@@ -765,7 +773,9 @@ def _join_unique_values(series: pd.Series, max_items: int = 8) -> str:
 
 
 @st.cache_data(show_spinner=False)
-def build_household_feature_base() -> tuple[pd.DataFrame, dict[str, dict[int, dict[str, float]]]]:
+def build_household_feature_base(
+    tipo_filtro: str = "Todas",
+) -> tuple[pd.DataFrame, dict[str, dict[int, dict[str, float]]]]:
     student_base, institution_ranges = build_student_feature_base()
 
     household = (
@@ -807,6 +817,7 @@ def build_household_feature_base() -> tuple[pd.DataFrame, dict[str, dict[int, di
             en_riesgo=("en_riesgo", "max"),
             quintil_institucion=("quintil_institucion", _mode_or_default),
             quintil_num=("quintil_num", "max"),
+            tipo_estudiante=("tipo_estudiante", _mode_or_default),
         )
         .copy()
     )
@@ -823,6 +834,13 @@ def build_household_feature_base() -> tuple[pd.DataFrame, dict[str, dict[int, di
         .str.strip()
         .replace("", "Sin dato")
     )
+
+    if tipo_filtro and tipo_filtro != "Todas":
+        household = household[
+            (household["Universidad"] != "UDLA")
+            | (household["tipo_estudiante"] == tipo_filtro)
+        ].copy()
+
     return household, institution_ranges
 
 
@@ -887,7 +905,20 @@ def _scale_cluster_matrix(feature_df: pd.DataFrame) -> np.ndarray:
     matrix = np.where(np.isnan(matrix), mean, matrix)
     std = np.nanstd(matrix, axis=0)
     std = np.where(std == 0, 1.0, std)
-    return (matrix - mean) / std
+    scaled = (matrix - mean) / std
+
+    # Down-weight dummy groups so each categorical variable contributes the
+    # same total variance as a single numeric feature.  Without this, a
+    # one-hot group of N dummies has N× the influence of one numeric column.
+    columns = feature_df.columns.tolist()
+    for cat_col in MODEL_CATEGORICAL_COLUMNS:
+        prefix = f"{cat_col}_"
+        dummy_indices = [i for i, c in enumerate(columns) if c.startswith(prefix)]
+        n_dummies = len(dummy_indices)
+        if n_dummies > 1:
+            scaled[:, dummy_indices] /= np.sqrt(n_dummies)
+
+    return scaled
 
 
 def _run_kmeans_labels(
@@ -1177,9 +1208,9 @@ def _support_interval(series: pd.Series) -> tuple[float, float]:
 
 @st.cache_data(show_spinner=False)
 def run_propensity_analysis(
-    min_clusters: int = 2, max_clusters: int = 6
+    min_clusters: int = 2, max_clusters: int = 6, tipo_filtro: str = "Todas"
 ) -> dict[str, Any]:
-    base_df, ranges = build_household_feature_base()
+    base_df, ranges = build_household_feature_base(tipo_filtro=tipo_filtro)
     universities = sorted(
         [value for value in base_df["Universidad"].unique().tolist() if value != "UDLA"]
     )
@@ -1202,6 +1233,14 @@ def run_propensity_analysis(
         std = np.nanstd(matrix, axis=0)
         std = np.where(std == 0, 1.0, std)
         scaled = (matrix - mean) / std
+
+        for cat_col in MODEL_CATEGORICAL_COLUMNS:
+            prefix = f"{cat_col}_"
+            dummy_indices = [i for i, c in enumerate(feature_cols) if c.startswith(prefix)]
+            n_dummies = len(dummy_indices)
+            if n_dummies > 1:
+                scaled[:, dummy_indices] /= np.sqrt(n_dummies)
+
         scaled_df = pd.DataFrame(scaled, columns=feature_cols, index=comparison.index)
 
         y = comparison["es_udla"].to_numpy(dtype=float)

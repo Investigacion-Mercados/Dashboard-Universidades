@@ -342,10 +342,21 @@ st.caption(
 )
 
 # ---------------------------------------------------------------------------
+# Enrollment type filter
+# ---------------------------------------------------------------------------
+TIPO_OPTIONS = ["Todas", "ENROLLMENT", "NEW ENROLLMENT"]
+tipo_filtro = st.selectbox(
+    "Tipo de alumno (UDLA)",
+    options=TIPO_OPTIONS,
+    index=0,
+    key="tipo_alumno_filter",
+)
+
+# ---------------------------------------------------------------------------
 # Load data
 # ---------------------------------------------------------------------------
 with st.spinner("Calculando propensity score y clusters..."):
-    analysis = run_propensity_analysis()
+    analysis = run_propensity_analysis(tipo_filtro=tipo_filtro)
 
 overview = analysis["overview"]
 details = analysis["details"]
