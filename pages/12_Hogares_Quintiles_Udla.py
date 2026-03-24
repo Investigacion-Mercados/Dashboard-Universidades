@@ -5,6 +5,7 @@ import streamlit as st
 
 from utils.comparacion_helpers import build_familias, norm_id, salario_por_id
 from utils.excel_loader import get_active_excel_filename, load_excel_sheet
+from utils.student_filters import render_student_academic_filters
 from utils.student_columns import normalize_university_column
 
 
@@ -163,38 +164,19 @@ estudiantes["IDENTIFICACION"] = norm_id(estudiantes["IDENTIFICACION"])
 universo_familiares["IDENTIFICACION"] = norm_id(universo_familiares["IDENTIFICACION"])
 
 st.markdown("### Filtros")
-col_filtro_1, col_filtro_2 = st.columns(2)
-estudiantes_filtrados = estudiantes
-universidad_sel = "Todas las universidades"
-
-with col_filtro_1:
-    if "Universidad" in estudiantes.columns:
-        universidades_disponibles = sorted(
-            estudiantes["Universidad"].dropna().astype(str).str.strip().unique().tolist()
-        )
-        universidad_sel = st.selectbox(
-            "Universidad",
-            options=["Todas las universidades"] + universidades_disponibles,
-            index=0,
-        )
-
-        if universidad_sel != "Todas las universidades":
-            estudiantes_filtrados = estudiantes[estudiantes["Universidad"] == universidad_sel]
-    else:
-        st.warning("La hoja Estudiantes no contiene la columna 'Universidad'.")
-
-titulo_universidad = (
-    universidad_sel
-    if universidad_sel != "Todas las universidades"
-    else "Todas las universidades"
+estudiantes_filtrados, filtros_estudiantes = render_student_academic_filters(
+    estudiantes, key_prefix="hogares_quintiles_udla"
 )
+universidad_sel = filtros_estudiantes["universidad"] or "Todas las universidades"
+titulo_universidad = universidad_sel
 
 title_placeholder.title(f"Quintiles: {titulo_universidad} vs UDLA")
 caption_placeholder.caption(
     f"Distribucion de hogares de {titulo_universidad} usando los rangos de quintiles UDLA."
 )
 
-with col_filtro_2:
+col_filtro_1 = st.columns(1)[0]
+with col_filtro_1:
     anio_emp, mes_emp = _select_anio_mes(empleo, "ANIO", "MES", titulo_universidad)
 
 if anio_emp is None or mes_emp is None:

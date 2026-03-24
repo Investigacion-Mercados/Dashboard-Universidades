@@ -5,6 +5,7 @@ import streamlit as st
 from utils.excel_loader import get_active_excel_filename, load_excel_sheet
 from utils.quintile_ranges import asignar_quintil_por_rangos, calcular_rangos_quintiles
 from utils.student_columns import normalize_university_column
+from utils.student_filters import render_student_academic_filters
 
 ANIO_CORTE = 2025
 MES_CORTE = 11
@@ -438,27 +439,12 @@ with st.spinner("Cargando datos..."):
 empleo = _filtrar_mes(empleo, ANIO_CORTE, MES_CORTE)
 deudas = _filtrar_mes(deudas, ANIO_CORTE, MES_CORTE)
 
-estudiantes_filtrados = estudiantes
-if "Universidad" in estudiantes.columns:
-    universidades_disponibles = sorted(
-        estudiantes["Universidad"].dropna().astype(str).str.strip().unique().tolist()
-    )
-    universidad_sel = st.selectbox(
-        "Universidad",
-        options=["Todas las universidades"] + universidades_disponibles,
-        index=0,
-    )
-
-    if universidad_sel != "Todas las universidades":
-        estudiantes_filtrados = estudiantes[estudiantes["Universidad"] == universidad_sel]
-else:
-    st.warning("La hoja Estudiantes no contiene la columna 'Universidad'.")
-
-titulo_universidad = (
-    universidad_sel
-    if universidad_sel != "Todas las universidades"
-    else "Todas las universidades"
+st.markdown("### Filtros academicos")
+estudiantes_filtrados, filtros_estudiantes = render_student_academic_filters(
+    estudiantes, key_prefix="vulnerabilidad"
 )
+universidad_sel = filtros_estudiantes["universidad"] or "Todas las universidades"
+titulo_universidad = universidad_sel
 rango_quintil_opts = ["Ecuador", titulo_universidad, "UDLA"]
 
 c1, c2, c3, c4, c5 = st.columns(5)

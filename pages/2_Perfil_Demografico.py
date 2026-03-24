@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 from utils.excel_loader import get_active_excel_filename, load_excel_sheet
 from utils.student_columns import normalize_university_column
+from utils.student_filters import render_student_academic_filters
 
 st.set_page_config(page_title="Perfil Demográfico", page_icon="👥", layout="wide")
 
@@ -379,34 +380,15 @@ with st.spinner("Cargando datos..."):
         excel_filename
     )
 
-col_filtro_1, col_filtro_2 = st.columns(2)
-universidad_sel = "Todas las universidades"
-
-with col_filtro_1:
-    estudiantes_filtrados = estudiantes_df
-    if "Universidad" in estudiantes_df.columns:
-        universidades_disponibles = sorted(
-            estudiantes_df["Universidad"].dropna().astype(str).str.strip().unique().tolist()
-        )
-        universidad_sel = st.selectbox(
-            "Universidad",
-            options=["Todas las universidades"] + universidades_disponibles,
-            index=0,
-        )
-
-        if universidad_sel != "Todas las universidades":
-            estudiantes_filtrados = estudiantes_df[
-                estudiantes_df["Universidad"] == universidad_sel
-            ]
-    else:
-        st.warning("La hoja Estudiantes no contiene la columna 'Universidad'.")
-
-with col_filtro_2:
-    quintil_sel = st.selectbox(
-        "Quintiles a usar",
-        options=list(OPCIONES_QUINTILES.keys()),
-        index=0,
-    )
+st.markdown("### Filtros")
+estudiantes_filtrados, _filtros_estudiantes = render_student_academic_filters(
+    estudiantes_df, key_prefix="perfil_demo"
+)
+quintil_sel = st.selectbox(
+    "Quintiles a usar",
+    options=list(OPCIONES_QUINTILES.keys()),
+    index=0,
+)
 
 rangos_quintiles = OPCIONES_QUINTILES[quintil_sel]
 st.caption(f"Rangos activos: {quintil_sel}")

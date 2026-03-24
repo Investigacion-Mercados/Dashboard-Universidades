@@ -6,6 +6,7 @@ from scipy.stats import gaussian_kde
 
 from utils.excel_loader import get_active_excel_filename, load_excel_sheet
 from utils.student_columns import normalize_university_column
+from utils.student_filters import render_student_academic_filters
 
 
 st.set_page_config(page_title="Distribución de edades", layout="wide")
@@ -97,21 +98,10 @@ with st.spinner("Cargando datos..."):
     excel_filename = get_active_excel_filename()
     estudiantes, universo_familiares, info_personal = load_data(excel_filename)
 
-estudiantes_filtrados = estudiantes
-if "Universidad" in estudiantes.columns:
-    universidades_disponibles = sorted(
-        estudiantes["Universidad"].dropna().astype(str).str.strip().unique().tolist()
-    )
-    universidad_sel = st.selectbox(
-        "Universidad",
-        options=["Todas las universidades"] + universidades_disponibles,
-        index=0,
-    )
-
-    if universidad_sel != "Todas las universidades":
-        estudiantes_filtrados = estudiantes[estudiantes["Universidad"] == universidad_sel]
-else:
-    st.warning("La hoja Estudiantes no contiene la columna 'Universidad'.")
+st.markdown("### Filtros")
+estudiantes_filtrados, _filtros_estudiantes = render_student_academic_filters(
+    estudiantes, key_prefix="distribucion_padres"
+)
 
 ids_estudiantes = _extraer_ids_estudiantes(estudiantes_filtrados)
 ids_padres = _extraer_ids_padres(universo_familiares, ids_estudiantes)

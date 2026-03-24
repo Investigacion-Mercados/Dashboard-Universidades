@@ -5,6 +5,7 @@ import streamlit as st
 
 from utils.excel_loader import get_active_excel_filename, load_excel_sheet
 from utils.student_columns import normalize_university_column
+from utils.student_filters import render_student_academic_filters
 
 
 ANIO_CORTE = 2025
@@ -266,20 +267,10 @@ empleo = _filtrar_mes(empleo, ANIO_CORTE, MES_CORTE)
 deudas = _filtrar_mes(deudas, ANIO_CORTE, MES_CORTE)
 
 estudiantes_filtrados = estudiantes
-if "Universidad" in estudiantes.columns:
-    universidades_disponibles = sorted(
-        estudiantes["Universidad"].dropna().astype(str).str.strip().unique().tolist()
-    )
-    universidad_sel = st.selectbox(
-        "Universidad",
-        options=["Todas las universidades"] + universidades_disponibles,
-        index=0,
-    )
-
-    if universidad_sel != "Todas las universidades":
-        estudiantes_filtrados = estudiantes[estudiantes["Universidad"] == universidad_sel]
-else:
-    st.warning("La hoja Estudiantes no contiene la columna 'Universidad'.")
+st.markdown("### Filtros academicos")
+estudiantes_filtrados, _filtros_estudiantes = render_student_academic_filters(
+    estudiantes, key_prefix="deudas_boxplot"
+)
 
 ids_estudiantes = set(
     estudiantes_filtrados["IDENTIFICACION"].dropna().astype(int).unique().tolist()

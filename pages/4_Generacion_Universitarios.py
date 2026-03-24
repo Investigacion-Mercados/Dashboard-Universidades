@@ -6,6 +6,7 @@ import sys
 # Añadir utils al path
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), "utils"))
 from excel_loader import get_active_excel_filename, load_excel_sheet
+from student_filters import apply_student_academic_filters, render_student_academic_filters
 from student_columns import normalize_university_column
 
 # Configuración de la página
@@ -37,7 +38,7 @@ def load_estudiantes(excel_filename: str):
 
 @st.cache_data
 def calcular_primera_generacion(
-    excel_filename: str, universidad_sel="Todas las universidades"
+    excel_filename: str, filtros_estudiantes: dict[str, str | None]
 ):
     """
     Calcula el porcentaje de estudiantes que son primera generación de universitarios.
@@ -46,12 +47,9 @@ def calcular_primera_generacion(
     NIVEL_ESTUDIO = "SUPERIOR".
     """
     # Cargar datos
-    df_estudiantes = load_estudiantes(excel_filename)
-    if (
-        universidad_sel != "Todas las universidades"
-        and "Universidad" in df_estudiantes.columns
-    ):
-        df_estudiantes = df_estudiantes[df_estudiantes["Universidad"] == universidad_sel]
+    df_estudiantes = apply_student_academic_filters(
+        load_estudiantes(excel_filename), filtros_estudiantes
+    )
     df_familiares = load_excel_sheet("Universo Familiares", excel_filename)
     df_info = load_excel_sheet("Informacion Personal", excel_filename)
 
@@ -110,22 +108,13 @@ def calcular_primera_generacion(
 try:
     excel_filename = get_active_excel_filename()
     df_estudiantes = load_estudiantes(excel_filename)
-    universidad_sel = "Todas las universidades"
-
-    if "Universidad" in df_estudiantes.columns:
-        universidades_disponibles = sorted(
-            df_estudiantes["Universidad"].dropna().astype(str).str.strip().unique().tolist()
-        )
-        universidad_sel = st.selectbox(
-            "Universidad",
-            options=["Todas las universidades"] + universidades_disponibles,
-            index=0,
-        )
-    else:
-        st.warning("La hoja Estudiantes no contiene la columna 'Universidad'.")
+    st.markdown("### Filtros")
+    _, filtros_estudiantes = render_student_academic_filters(
+        df_estudiantes, key_prefix="primera_generacion"
+    )
 
     primera_gen, no_primera_gen, pct_primera, pct_no_primera, total = (
-        calcular_primera_generacion(excel_filename, universidad_sel)
+        calcular_primera_generacion(excel_filename, filtros_estudiantes)
     )
 
     # Mostrar en dos columnas con tarjetas

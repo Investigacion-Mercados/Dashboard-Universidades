@@ -10,6 +10,7 @@ from utils.comparacion_helpers import build_familias, norm_id, salario_por_id
 from utils.excel_loader import load_excel_sheet
 from utils.quintile_ranges import asignar_quintil_por_rangos, calcular_rangos_quintiles
 from utils.student_columns import normalize_university_column
+from utils.student_filters import render_student_academic_filters
 from utils.udla_sql import cargar_datos_udla
 
 QUINTIL_ORDER = ["Sin empleo", "1", "2", "3", "4", "5"]
@@ -194,26 +195,12 @@ ingresos_udla["salario"] = pd.to_numeric(ingresos_udla["salario"], errors="coerc
 )
 
 st.markdown("### Filtros")
-f1, f2, f3 = st.columns(3)
-estudiantes_filtrados = estudiantes
-universidad_sel = "Todas las universidades"
+estudiantes_filtrados, filtros_estudiantes = render_student_academic_filters(
+    estudiantes, key_prefix="quintiles_similares"
+)
+universidad_sel = filtros_estudiantes["universidad"] or "Todas las universidades"
+f1, f2 = st.columns(2)
 with f1:
-    if "Universidad" in estudiantes.columns:
-        universidades_disponibles = sorted(
-            estudiantes["Universidad"].dropna().astype(str).str.strip().unique().tolist()
-        )
-        universidad_sel = st.selectbox(
-            "Universidad",
-            options=["Todas las universidades"] + universidades_disponibles,
-            index=0,
-        )
-
-        if universidad_sel != "Todas las universidades":
-            estudiantes_filtrados = estudiantes[estudiantes["Universidad"] == universidad_sel]
-    else:
-        st.warning("La hoja Estudiantes no contiene la columna 'Universidad'.")
-
-with f2:
     tipo_udla = st.selectbox(
         "Grupo UDLA",
         options=["E", "A", "G"],
@@ -222,7 +209,7 @@ with f2:
         ],
         index=0,
     )
-with f3:
+with f2:
     periodos_udla = []
     if "periodo" in personas_udla.columns:
         periodos_udla = (
