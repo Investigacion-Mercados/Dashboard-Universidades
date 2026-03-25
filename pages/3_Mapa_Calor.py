@@ -7,7 +7,7 @@ import os
 from shapely.geometry import Point
 
 from utils.excel_loader import get_active_excel_filename, load_excel_sheet
-from utils.student_columns import normalize_university_column
+from utils.student_columns import find_column, normalize_university_column
 from utils.student_filters import render_student_academic_filters
 
 # Configuracion de la pagina
@@ -97,19 +97,42 @@ def obtener_nombre(row):
     return "Sin nombre"
 
 
-def calcular_estudiantes_por_parroquia(gdf_todas, df_estudiantes):
-    """Calcula cuantos estudiantes hay en cada parroquia"""
-    estudiantes_por_parroquia = {}
+def enriquecer_estudiantes_con_parroquia(gdf_todas, df_estudiantes):
+    """Asigna parroquia a cada estudiante segun sus coordenadas."""
+    detalle = df_estudiantes.copy()
+    detalle["PARROQUIA"] = "Sin parroquia"
+    detalle["PARROQUIA_IDX"] = pd.Series(pd.NA, index=detalle.index, dtype="Int64")
 
-    for idx, parr_row in gdf_todas.iterrows():
-        count = 0
-        for _, est_row in df_estudiantes.iterrows():
-            punto = Point(est_row["LONGITUD"], est_row["LATITUD"])
-            if parr_row.geometry.contains(punto):
-                count += 1
-        estudiantes_por_parroquia[idx] = count
+    if detalle.empty:
+        return detalle
 
-    return estudiantes_por_parroquia
+    parroquias = [
+        (idx, obtener_nombre(row), row.geometry) for idx, row in gdf_todas.iterrows()
+    ]
+
+    for idx_estudiante, est_row in detalle.iterrows():
+        punto = Point(est_row["LONGITUD"], est_row["LATITUD"])
+        for idx_parroquia, nombre_parroquia, geometry in parroquias:
+            if geometry.contains(punto):
+                detalle.at[idx_estudiante, "PARROQUIA"] = nombre_parroquia
+                detalle.at[idx_estudiante, "PARROQUIA_IDX"] = idx_parroquia
+                break
+
+    return detalle
+
+
+def calcular_estudiantes_por_parroquia(df_estudiantes):
+    """Calcula cuantos estudiantes hay en cada parroquia ya asignada."""
+    if df_estudiantes.empty or "PARROQUIA_IDX" not in df_estudiantes.columns:
+        return {}
+
+    conteos = (
+        df_estudiantes.dropna(subset=["PARROQUIA_IDX"])
+        .groupby("PARROQUIA_IDX")
+        .size()
+        .to_dict()
+    )
+    return {int(idx): int(cantidad) for idx, cantidad in conteos.items()}
 
 
 def get_color_estudiantes(cantidad, max_cantidad):
@@ -130,6 +153,36 @@ def get_color_estudiantes(cantidad, max_cantidad):
     return "#004C99"
 
 
+def preparar_tabla_ubicaciones(df_estudiantes):
+    """Prepara la tabla de detalle de estudiantes con ubicacion."""
+    nombre_col = find_column(df_estudiantes, ["NOMBRE", "NOMBRES", "Nombre"])
+    ubicacion_col = find_column(df_estudiantes, ["UBICACION", "Ubicacion"])
+
+    if nombre_col is None:
+        estudiantes = df_estudiantes["IDENTIFICACION"].astype(str)
+    else:
+        estudiantes = df_estudiantes[nombre_col].fillna("").astype(str).str.strip()
+        estudiantes = estudiantes.where(estudiantes != "", df_estudiantes["IDENTIFICACION"].astype(str))
+
+    if ubicacion_col is None:
+        ubicaciones = pd.Series([""] * len(df_estudiantes), index=df_estudiantes.index)
+    else:
+        ubicaciones = df_estudiantes[ubicacion_col].fillna("").astype(str).str.strip()
+
+    tabla = pd.DataFrame(
+        {
+            "Identificacion": df_estudiantes["IDENTIFICACION"].astype(str),
+            "Estudiante": estudiantes,
+            "Parroquia": df_estudiantes["PARROQUIA"].fillna("Sin parroquia"),
+            "Ubicacion": ubicaciones,
+            "Latitud": df_estudiantes["LATITUD"].round(6),
+            "Longitud": df_estudiantes["LONGITUD"].round(6),
+        }
+    )
+
+    return tabla.sort_values(["Parroquia", "Estudiante"]).reset_index(drop=True)
+
+
 def crear_mapa(gdf_todas, df_estudiantes):
     """Crea el mapa con parroquias y mapa de calor de estudiantes"""
     if not df_estudiantes.empty:
@@ -141,9 +194,7 @@ def crear_mapa(gdf_todas, df_estudiantes):
 
     m = folium.Map(location=centro, zoom_start=11, tiles="cartodbpositron")
 
-    estudiantes_por_parroquia = calcular_estudiantes_por_parroquia(
-        gdf_todas, df_estudiantes
-    )
+    estudiantes_por_parroquia = calcular_estudiantes_por_parroquia(df_estudiantes)
     max_estudiantes = (
         max(estudiantes_por_parroquia.values()) if estudiantes_por_parroquia else 1
     )
@@ -211,6 +262,7 @@ try:
         lock_single_option_keys={"universidad"},
     )
     df_ubicaciones = filtrar_ubicaciones(df_info, estudiantes_filtrados)
+    df_ubicaciones = enriquecer_estudiantes_con_parroquia(gdf_todas, df_ubicaciones)
 
     mapa = crear_mapa(gdf_todas, df_ubicaciones)
 
@@ -222,6 +274,13 @@ try:
         st.metric("Estudiantes", len(df_ubicaciones))
 
     st_folium(mapa, width=1400, height=800, returned_objects=[])
+
+    st.markdown("### Detalle de ubicaciones")
+    tabla_ubicaciones = preparar_tabla_ubicaciones(df_ubicaciones)
+    if tabla_ubicaciones.empty:
+        st.info("No hay estudiantes con ubicacion para mostrar en la tabla.")
+    else:
+        st.dataframe(tabla_ubicaciones, use_container_width=True, hide_index=True)
 
 except Exception as e:
     st.error(f"Error al cargar el mapa: {str(e)}")
