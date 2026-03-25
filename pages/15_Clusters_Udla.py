@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import math
 
 import pandas as pd
@@ -483,6 +484,13 @@ def _profile_heatmap(profile_df: pd.DataFrame) -> go.Figure:
     return fig
 
 
+def _to_excel_bytes(df: pd.DataFrame, sheet_name: str = "Detalle") -> bytes:
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name=sheet_name)
+    return output.getvalue()
+
+
 st.title("Clusters Udla")
 st.caption(
     "Universo exclusivo de UDLA. Los clusters se recalculan con los filtros actuales "
@@ -664,8 +672,9 @@ with tab_perfiles:
     )
 
 with tab_detalle:
+    detail_df = _detail_cluster_table(summary_df)
     st.dataframe(
-        _detail_cluster_table(summary_df),
+        detail_df,
         use_container_width=True,
         hide_index=True,
         column_config={
@@ -691,6 +700,13 @@ with tab_detalle:
                 "Promedio hijos", format="%d"
             ),
         },
+    )
+    st.download_button(
+        label="Descargar detalle en Excel (.xlsx)",
+        data=_to_excel_bytes(detail_df, sheet_name="Detalle UDLA"),
+        file_name="detalle_clusters_udla.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key="clusters_udla_detalle_xlsx",
     )
 
 with tab_detalle_graficos:

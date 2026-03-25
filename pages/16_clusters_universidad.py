@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import math
 
 import numpy as np
@@ -391,6 +392,13 @@ def _detail_cluster_table(df: pd.DataFrame) -> pd.DataFrame:
     return out[columns].rename(columns=rename_map)
 
 
+def _to_excel_bytes(df: pd.DataFrame, sheet_name: str = "Detalle") -> bytes:
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name=sheet_name)
+    return output.getvalue()
+
+
 st.title("Clusters Universidad")
 st.caption("Vista de detalle sobre todo el universo de `db/Universidades.xlsx`.")
 
@@ -419,8 +427,9 @@ m3.metric("Hogares", f"{int(students_df['hogar_id'].nunique()):,}")
 m4.metric("Clusters", cluster_count)
 
 st.markdown("### Detalle")
+detail_df = _detail_cluster_table(summary_df)
 st.dataframe(
-    _detail_cluster_table(summary_df),
+    detail_df,
     use_container_width=True,
     hide_index=True,
     column_config={
@@ -438,4 +447,11 @@ st.dataframe(
         ),
         "Promedio hijos": st.column_config.NumberColumn("Promedio hijos", format="%d"),
     },
+)
+st.download_button(
+    label="Descargar detalle en Excel (.xlsx)",
+    data=_to_excel_bytes(detail_df, sheet_name="Detalle Universidades"),
+    file_name="detalle_clusters_universidades.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    key="clusters_universidades_detalle_xlsx",
 )
