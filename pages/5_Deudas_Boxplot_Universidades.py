@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+import unicodedata
 
 from utils.excel_loader import load_excel_sheet
 from utils.student_columns import normalize_university_column
@@ -49,6 +50,20 @@ QUINTIL_COLORS = {
     "Quintil 5": "#27ae60",
 }
 
+UNIVERSITY_ABBREVIATIONS = {
+    "UNIVERSIDAD CENTRAL DEL ECUADOR": "UCE",
+    "UNIVERSIDAD DE LOS HEMISFERIOS": "UHE",
+    "UNIVERSIDAD TECNOLOGICA INDOAMERICA": "UTI",
+    "UNIVERSIDAD PARTICULAR INTERNACIONAL SEK": "SEK",
+    "UNIVERSIDAD INTERNACIONAL DEL ECUADOR": "UIDE",
+    "UNIVERSIDAD SAN FRANCISCO DE QUITO": "USFQ",
+    "UNIVERSIDAD POLITECNICA SALESIANA": "UPS",
+    "PONTIFICIA UNIVERSIDAD CATOLICA DEL ECUADOR": "PUCE",
+    "ESCUELA POLITECNICA NACIONAL": "EPN",
+    "UNIVERSIDAD TECNOLOGICA EQUINOCCIAL": "UTE",
+    "UDLA": "UDLA",
+}
+
 
 def _rgba(hex_color: str, alpha: float) -> str:
     color = hex_color.strip().lstrip("#")
@@ -58,6 +73,16 @@ def _rgba(hex_color: str, alpha: float) -> str:
     g = int(color[2:4], 16)
     b = int(color[4:6], 16)
     return f"rgba({r},{g},{b},{alpha})"
+
+
+def _normalize_text(value: str) -> str:
+    text = str(value).strip().upper()
+    text = unicodedata.normalize("NFKD", text)
+    return "".join(ch for ch in text if not unicodedata.combining(ch))
+
+
+def _university_label(value: str) -> str:
+    return UNIVERSITY_ABBREVIATIONS.get(_normalize_text(value), str(value).strip())
 
 
 def _parse_valor_deuda(series: pd.Series) -> pd.Series:
@@ -436,7 +461,7 @@ def construir_boxplot_universidades(
 
         subset["x_plot"] = subset["GRUPO_QUINTIL"].map(x_positions).astype(float)
         subset["x_plot"] = subset["x_plot"] + rng.normal(0, 0.08, size=len(subset))
-        subset["etiqueta"] = universidad
+        subset["etiqueta"] = _university_label(universidad)
         subset["hover_text"] = subset.apply(
             lambda row: (
                 f"<b>{universidad}</b><br>"
