@@ -36,6 +36,13 @@ def _clean_series(series: pd.Series, default: str = "Sin dato") -> pd.Series:
     )
 
 
+def _round_half_up(value: float) -> int:
+    number = float(pd.to_numeric(value, errors="coerce"))
+    if pd.isna(number):
+        return 0
+    return int(math.floor(number + 0.5))
+
+
 def _render_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, str | None]]:
     specs = [
         ("tipo_estudiante", "Tipo", "Todos los tipos"),
@@ -176,12 +183,6 @@ def _detail_cluster_table(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
 
-    def _round_half_up(value: float) -> int:
-        number = float(pd.to_numeric(value, errors="coerce"))
-        if pd.isna(number):
-            return 0
-        return int(math.floor(number + 0.5))
-
     out = df.copy()
     out["hijos_promedio_entero"] = out["hijos_promedio"].apply(_round_half_up)
     out["hogares_con_deuda_q"] = out.apply(
@@ -223,6 +224,110 @@ def _detail_cluster_table(df: pd.DataFrame) -> pd.DataFrame:
         "tipo_estudiantes_pg": "Tipo de estudiantes",
     }
     return out[columns].rename(columns=rename_map)
+
+
+def _age_bucket(series: pd.Series) -> pd.Series:
+    values = pd.to_numeric(series, errors="coerce")
+    out = pd.Series("Sin dato", index=values.index, dtype="object")
+    out[(values >= 15) & (values <= 19)] = "15-19 anos"
+    out[(values >= 20) & (values <= 22)] = "20-22 anos"
+    out[(values >= 23) & (values <= 25)] = "23-25 anos"
+    out[values >= 26] = "Mas de 25 anos"
+    return out
+
+
+def _hijos_bucket(series: pd.Series) -> pd.Series:
+    rounded = pd.Series(series).apply(_round_half_up)
+    out = rounded.astype(str)
+    out = out.where(rounded < 5, "5+")
+    return out
+
+
+def _yes_no_series(series: pd.Series) -> pd.Series:
+    numeric = pd.to_numeric(series, errors="coerce").fillna(0)
+    return numeric.map({1: "Si", 0: "No"}).fillna("No")
+
+
+def _stacked_bar_chart(
+    df: pd.DataFrame,
+    category_series: pd.Series,
+    title: str,
+    *,
+    category_order: list[str] | None = None,
+    unique_id_col: str | None = None,
+    y_label: str = "Participacion (%)",
+    normalize: bool = True,
+    height: int = 320,
+) -> go.Figure:
+    if df.empty:
+        return go.Figure()
+
+    chart_df = pd.DataFrame(
+        {
+            "cluster": _clean_series(df["cluster"]),
+            "categoria": _clean_series(category_series),
+        }
+    )
+    if unique_id_col is not None and unique_id_col in df.columns:
+        chart_df["id_unico"] = _clean_series(df[unique_id_col], default="0")
+        grouped = (
+            chart_df.groupby(["cluster", "categoria"], as_index=False)["id_unico"]
+            .nunique()
+            .rename(columns={"id_unico": "conteo"})
+        )
+        totals = (
+            chart_df.groupby("cluster", as_index=False)["id_unico"]
+            .nunique()
+            .rename(columns={"id_unico": "total"})
+        )
+    else:
+        grouped = (
+            chart_df.groupby(["cluster", "categoria"], as_index=False)
+            .size()
+            .rename(columns={"size": "conteo"})
+        )
+        totals = (
+            chart_df.groupby("cluster", as_index=False)
+            .size()
+            .rename(columns={"size": "total"})
+        )
+
+    grouped = grouped.merge(totals, on="cluster", how="left")
+    grouped["valor"] = (
+        grouped["conteo"] / grouped["total"] * 100.0 if normalize else grouped["conteo"]
+    )
+
+    if category_order is None:
+        category_order = (
+            grouped.groupby("categoria", as_index=False)["conteo"]
+            .sum()
+            .sort_values("conteo", ascending=False)["categoria"]
+            .tolist()
+        )
+
+    cluster_order = pd.Index(df["cluster"].dropna().astype(str)).unique().tolist()
+    fig = px.bar(
+        grouped,
+        x="cluster",
+        y="valor",
+        color="categoria",
+        barmode="stack",
+        template=CHART_TEMPLATE,
+        category_orders={"cluster": cluster_order, "categoria": category_order},
+        hover_data={"conteo": True, "total": True, "valor": ":.1f"},
+    )
+    fig.update_layout(
+        title=dict(text=title, font=dict(size=13)),
+        margin=CHART_MARGIN,
+        xaxis_title="",
+        yaxis_title=y_label,
+        legend_title="",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        height=height,
+    )
+    if normalize:
+        fig.update_yaxes(range=[0, 100])
+    return fig
 
 
 def _overview_table(
@@ -392,8 +497,15 @@ metric_4.metric(
     f"{float(students_df['estudiante_quito'].mean() * 100.0):.1f}%",
 )
 
-tab_mapa, tab_perfiles, tab_detalle, tab_universidades, tab_metodo = st.tabs(
-    ["Mapa de clusters", "Perfiles", "Detalle", "Cluster Universidades", "Metodologia"]
+tab_mapa, tab_perfiles, tab_detalle, tab_detalle_graficos, tab_universidades, tab_metodo = st.tabs(
+    [
+        "Mapa de clusters",
+        "Perfiles",
+        "Detalle",
+        "Detalle Graficos",
+        "Cluster Universidades",
+        "Metodologia",
+    ]
 )
 
 with tab_mapa:
@@ -535,6 +647,101 @@ with tab_detalle:
             ),
         },
     )
+
+with tab_detalle_graficos:
+    st.caption(
+        "Distribucion apilada por cluster para las mismas variables resumidas en la tabla de detalle."
+    )
+
+    age_col, gender_col = st.columns(2)
+    with age_col:
+        st.plotly_chart(
+            _stacked_bar_chart(
+                students_df,
+                _age_bucket(students_df["edad_estudiante"]),
+                "Edad estudiante",
+                category_order=["15-19 anos", "20-22 anos", "23-25 anos", "Mas de 25 anos", "Sin dato"],
+            ),
+            use_container_width=True,
+        )
+    with gender_col:
+        st.plotly_chart(
+            _stacked_bar_chart(
+                students_df,
+                students_df["sexo_estudiante"],
+                "Genero estudiante",
+                category_order=["MUJER", "HOMBRE", "DESCONOCIDO"],
+            ),
+            use_container_width=True,
+        )
+
+    quito_col, ingreso_col = st.columns(2)
+    with quito_col:
+        st.plotly_chart(
+            _stacked_bar_chart(
+                students_df,
+                _yes_no_series(students_df["estudiante_quito"]),
+                "Es de Quito",
+                category_order=["Si", "No"],
+            ),
+            use_container_width=True,
+        )
+    with ingreso_col:
+        st.plotly_chart(
+            _stacked_bar_chart(
+                students_df,
+                students_df["quintil_ingreso_hogar"],
+                "Quintil de ingresos",
+                category_order=["Sin empleo", "1", "2", "3", "4", "5"],
+            ),
+            use_container_width=True,
+        )
+
+    hijos_col, deuda_col = st.columns(2)
+    with hijos_col:
+        st.plotly_chart(
+            _stacked_bar_chart(
+                students_df,
+                _hijos_bucket(students_df["hijos_hogar_promedio"]),
+                "Promedio hijos en el hogar",
+                category_order=["0", "1", "2", "3", "4", "5+"],
+            ),
+            use_container_width=True,
+        )
+    with deuda_col:
+        st.plotly_chart(
+            _stacked_bar_chart(
+                students_df,
+                students_df["quintil_deuda_hogar"],
+                "Hogares con deuda / quintil deuda",
+                category_order=["Sin deuda", "1", "2", "3", "4", "5"],
+                unique_id_col="hogar_id",
+            ),
+            use_container_width=True,
+        )
+
+    estado_col, tipo_col = st.columns(2)
+    with estado_col:
+        st.plotly_chart(
+            _stacked_bar_chart(
+                students_df,
+                students_df["estado_hogar"],
+                "Estado del hogar",
+            ),
+            use_container_width=True,
+        )
+    with tipo_col:
+        st.plotly_chart(
+            _stacked_bar_chart(
+                students_df,
+                _yes_no_series(students_df["primera_generacion"]).replace(
+                    {"Si": "Primera generacion", "No": "No primera generacion"}
+                ),
+                "Tipo de estudiantes",
+                category_order=["Primera generacion", "No primera generacion"],
+            ),
+            use_container_width=True,
+        )
 
 with tab_universidades:
     st.caption(
