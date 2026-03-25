@@ -4,12 +4,11 @@ import folium
 from streamlit_folium import st_folium
 import pandas as pd
 import os
-import sys
 from shapely.geometry import Point
 
-# Anadir utils al path
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), "utils"))
-from excel_loader import get_active_excel_filename, load_excel_sheet
+from utils.excel_loader import get_active_excel_filename, load_excel_sheet
+from utils.student_columns import normalize_university_column
+from utils.student_filters import render_student_academic_filters
 
 # Configuracion de la pagina
 st.set_page_config(
@@ -52,20 +51,38 @@ def _normalizar_identificacion(df, columnas_posibles):
     return df
 
 
+def _normalizar_universidad(df):
+    return normalize_university_column(df)
+
+
 @st.cache_data
-def cargar_estudiantes(excel_filename: str):
-    """Carga los estudiantes y sus ubicaciones"""
+def cargar_datos(excel_filename: str):
+    """Carga estudiantes e informacion personal del archivo activo."""
     df_estudiantes = load_excel_sheet("Estudiantes", excel_filename)
     df_estudiantes = _normalizar_identificacion(
         df_estudiantes, ["IDENTIFICACION", "Cedula", "CEDULA"]
     )
+    df_estudiantes = _normalizar_universidad(df_estudiantes)
 
     df_info = load_excel_sheet("Informacion Personal", excel_filename)
+    df_info = _normalizar_identificacion(df_info, ["IDENTIFICACION", "Cedula", "CEDULA"])
 
-    # Filtrar solo estudiantes con ubicacion
+    return df_estudiantes, df_info
+
+
+def filtrar_ubicaciones(df_info, df_estudiantes):
+    """Filtra ubicaciones solo para los estudiantes visibles en los filtros."""
+    if "IDENTIFICACION" not in df_info.columns or "IDENTIFICACION" not in df_estudiantes.columns:
+        return pd.DataFrame(columns=["IDENTIFICACION", "LATITUD", "LONGITUD"])
+
     df_ubicaciones = df_info[
         df_info["IDENTIFICACION"].isin(df_estudiantes["IDENTIFICACION"])
     ].copy()
+    if "LATITUD" not in df_ubicaciones.columns or "LONGITUD" not in df_ubicaciones.columns:
+        return pd.DataFrame(columns=["IDENTIFICACION", "LATITUD", "LONGITUD"])
+
+    df_ubicaciones["LATITUD"] = pd.to_numeric(df_ubicaciones["LATITUD"], errors="coerce")
+    df_ubicaciones["LONGITUD"] = pd.to_numeric(df_ubicaciones["LONGITUD"], errors="coerce")
     df_ubicaciones = df_ubicaciones.dropna(subset=["LATITUD", "LONGITUD"])
 
     return df_ubicaciones
@@ -185,16 +202,24 @@ def crear_mapa(gdf_todas, df_estudiantes):
 try:
     gdf_todas = cargar_geojson()
     excel_filename = get_active_excel_filename()
-    df_estudiantes = cargar_estudiantes(excel_filename)
+    df_estudiantes, df_info = cargar_datos(excel_filename)
 
-    mapa = crear_mapa(gdf_todas, df_estudiantes)
+    st.markdown("### Filtros")
+    estudiantes_filtrados, _filtros_estudiantes = render_student_academic_filters(
+        df_estudiantes,
+        key_prefix="mapa_calor",
+        lock_single_option_keys={"universidad"},
+    )
+    df_ubicaciones = filtrar_ubicaciones(df_info, estudiantes_filtrados)
+
+    mapa = crear_mapa(gdf_todas, df_ubicaciones)
 
     # Informacion
     col1, col2 = st.columns(2)
     with col1:
         st.metric("Parroquias", len(gdf_todas))
     with col2:
-        st.metric("Estudiantes", len(df_estudiantes))
+        st.metric("Estudiantes", len(df_ubicaciones))
 
     st_folium(mapa, width=1400, height=800, returned_objects=[])
 

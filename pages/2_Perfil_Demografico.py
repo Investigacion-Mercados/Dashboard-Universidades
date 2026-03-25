@@ -76,6 +76,142 @@ def _conteos_tipo_hogar(df):
     return int(conteos.get("LEAD", 0)), int(conteos.get("DOCUMENTADO", 0))
 
 
+def _first_notna(series):
+    valores = pd.Series(series).dropna()
+    return valores.iloc[0] if not valores.empty else np.nan
+
+
+def _unique_ids_tuple(series):
+    valores = pd.Series(series, dtype="object").dropna().drop_duplicates().tolist()
+    return tuple(valores)
+
+
+def _flatten_unique_ids(values):
+    ids = []
+    for value in values:
+        if isinstance(value, (list, tuple, set, np.ndarray, pd.Series)):
+            ids.extend(list(value))
+        elif pd.notna(value):
+            ids.append(value)
+
+    if not ids:
+        return np.array([])
+
+    return pd.Series(ids).dropna().drop_duplicates().values
+
+
+def preparar_info_personal_con_edad(info_personal_df):
+    """Prepara informacion personal e incluye edad calculada."""
+    if "IDENTIFICACION" not in info_personal_df.columns:
+        return pd.DataFrame(columns=["IDENTIFICACION", "HIJOS", "SEXO", "EDAD"])
+
+    info_df = pd.DataFrame({"IDENTIFICACION": info_personal_df["IDENTIFICACION"]})
+    info_df["HIJOS"] = pd.to_numeric(
+        info_personal_df.get("HIJOS", pd.Series(0, index=info_personal_df.index)),
+        errors="coerce",
+    ).fillna(0)
+    info_df["SEXO"] = info_personal_df.get("SEXO", pd.Series(np.nan, index=info_df.index))
+    info_df["EDAD"] = np.nan
+
+    if "FECHA_NACIMIENTO" in info_personal_df.columns:
+        fechas_nacimiento = pd.to_datetime(
+            info_personal_df["FECHA_NACIMIENTO"], errors="coerce", dayfirst=True
+        )
+        hoy = pd.Timestamp.today().normalize()
+        edades = np.floor((hoy - fechas_nacimiento).dt.days / 365.25)
+        info_df["EDAD"] = edades.where((edades.notna()) & (edades >= 0))
+
+    return info_df
+
+
+def calcular_demografia_por_ids(ids, info_personal_df):
+    """Calcula edad promedio, mediana y distribucion de sexo para un conjunto de IDs."""
+    if ids is None:
+        return {
+            "cantidad": 0,
+            "promedio_edad": np.nan,
+            "mediana_edad": np.nan,
+            "porcentaje_hombres": None,
+            "porcentaje_mujeres": None,
+        }
+
+    ids_limpios = pd.Series(ids).dropna().drop_duplicates()
+    if len(ids_limpios) == 0:
+        return {
+            "cantidad": 0,
+            "promedio_edad": np.nan,
+            "mediana_edad": np.nan,
+            "porcentaje_hombres": None,
+            "porcentaje_mujeres": None,
+        }
+
+    info_demo = preparar_info_personal_con_edad(info_personal_df)[
+        ["IDENTIFICACION", "SEXO", "EDAD"]
+    ].drop_duplicates("IDENTIFICACION")
+
+    datos = pd.DataFrame({"IDENTIFICACION": ids_limpios}).merge(
+        info_demo, on="IDENTIFICACION", how="left"
+    )
+    sexo_serie = datos["SEXO"].fillna("").astype(str).str.strip().str.upper()
+
+    total = len(datos)
+    hombres = (sexo_serie == "HOMBRE").sum()
+    mujeres = (sexo_serie == "MUJER").sum()
+
+    return {
+        "cantidad": total,
+        "promedio_edad": float(datos["EDAD"].mean())
+        if pd.notna(datos["EDAD"].mean())
+        else np.nan,
+        "mediana_edad": float(datos["EDAD"].median())
+        if pd.notna(datos["EDAD"].median())
+        else np.nan,
+        "porcentaje_hombres": (hombres / total * 100) if total > 0 else None,
+        "porcentaje_mujeres": (mujeres / total * 100) if total > 0 else None,
+    }
+
+
+def obtener_ids_familiares_desde_estudiantes(estudiante_ids, universo_fam_df):
+    """Obtiene IDs unicos de familiares desde IDs de estudiantes."""
+    if (
+        universo_fam_df is None
+        or len(estudiante_ids) == 0
+        or "IDENTIFICACION" not in universo_fam_df.columns
+    ):
+        return np.array([])
+
+    columnas_familia = [
+        col for col in ["CED_PADRE", "CED_MADRE"] if col in universo_fam_df.columns
+    ]
+    if not columnas_familia:
+        return np.array([])
+
+    familiares = universo_fam_df[
+        universo_fam_df["IDENTIFICACION"].isin(estudiante_ids)
+    ][columnas_familia].copy()
+    for columna in columnas_familia:
+        familiares[columna] = familiares[columna].replace(0, np.nan)
+
+    return (
+        pd.concat([familiares[col] for col in columnas_familia], ignore_index=True)
+        .dropna()
+        .drop_duplicates()
+        .values
+    )
+
+
+def calcular_demografia_estudiantes_familiares(
+    estudiante_ids, universo_fam_df, info_personal_df
+):
+    """Calcula demografia para estudiantes y sus familiares."""
+    demo_estudiantes = calcular_demografia_por_ids(estudiante_ids, info_personal_df)
+    ids_familiares = obtener_ids_familiares_desde_estudiantes(
+        estudiante_ids, universo_fam_df
+    )
+    demo_familiares = calcular_demografia_por_ids(ids_familiares, info_personal_df)
+    return {"estudiantes": demo_estudiantes, "familiares": demo_familiares}
+
+
 @st.cache_data
 def load_data(excel_filename: str):
     """Carga todas las hojas necesarias"""
@@ -113,6 +249,7 @@ def calcular_metricas_estudiantes_familia(
     estudiantes_df, universo_fam_df, empleo_df, info_personal_df, rangos_quintiles
 ):
     """Calcula métricas de quintiles para Estudiantes usando análisis por HOGAR de sus familias"""
+    info_personal_con_edad = preparar_info_personal_con_edad(info_personal_df)
 
     # Obtener IDs de estudiantes
     estudiantes_grad = estudiantes_df["IDENTIFICACION"].unique()
@@ -161,7 +298,10 @@ def calcular_metricas_estudiantes_familia(
 
     # Crear diccionario de hijos por identificación
     hijos_dict = dict(
-        zip(info_personal_df["IDENTIFICACION"], info_personal_df["HIJOS"])
+        zip(info_personal_con_edad["IDENTIFICACION"], info_personal_con_edad["HIJOS"])
+    )
+    edad_dict = dict(
+        zip(info_personal_con_edad["IDENTIFICACION"], info_personal_con_edad["EDAD"])
     )
     tipo_estudiante_dict = {}
     if "Tipo" in estudiantes_df.columns:
@@ -203,9 +343,12 @@ def calcular_metricas_estudiantes_familia(
                 {
                     "hogar_id": hogar_id,
                     "estudiante_id": estudiante_id,
+                    "ced_padre": ced_padre,
+                    "ced_madre": ced_madre,
                     "salario_hogar": salario_hogar,
                     "hijos": hijos_hogar,
                     "tipo_hogar": tipo_estudiante_dict.get(estudiante_id, "SIN DATO"),
+                    "edad_estudiante": edad_dict.get(estudiante_id, np.nan),
                 }
             )
         else:
@@ -230,6 +373,10 @@ def calcular_metricas_estudiantes_familia(
                 salario_hogar=("salario_hogar", "max"),
                 hijos=("hijos", "max"),
                 tipo_hogar=("tipo_hogar", _clasificar_tipo_hogar),
+                edad_estudiante=("edad_estudiante", "mean"),
+                estudiante_ids=("estudiante_id", _unique_ids_tuple),
+                ced_padre=("ced_padre", _first_notna),
+                ced_madre=("ced_madre", _first_notna),
             )
             .copy()
         )
@@ -270,13 +417,32 @@ def calcular_metricas_estudiantes_familia(
             hogares_lead, hogares_documentado = _conteos_tipo_hogar(hogares_quintil)
 
             if len(hogares_quintil) > 0:
+                ids_estudiantes_quintil = _flatten_unique_ids(
+                    hogares_quintil["estudiante_ids"]
+                )
+                ids_familiares_quintil = _flatten_unique_ids(
+                    pd.concat(
+                        [hogares_quintil["ced_padre"], hogares_quintil["ced_madre"]],
+                        ignore_index=True,
+                    )
+                )
+                demografia_quintil = {
+                    "estudiantes": calcular_demografia_por_ids(
+                        ids_estudiantes_quintil, info_personal_df
+                    ),
+                    "familiares": calcular_demografia_por_ids(
+                        ids_familiares_quintil, info_personal_df
+                    ),
+                }
                 metricas[quintil] = {
                     "cantidad": len(hogares_quintil),
                     "promedio_hijos": int(round(hogares_quintil["hijos"].mean())),
                     "promedio_salario": hogares_quintil["salario_hogar"].mean(),
                     "mediana_salario": hogares_quintil["salario_hogar"].median(),
+                    "promedio_edad": demografia_quintil["estudiantes"]["promedio_edad"],
                     "hogares_lead": hogares_lead,
                     "hogares_documentado": hogares_documentado,
+                    "demografia": demografia_quintil,
                 }
             else:
                 metricas[quintil] = {
@@ -284,8 +450,13 @@ def calcular_metricas_estudiantes_familia(
                     "promedio_hijos": 0,
                     "promedio_salario": 0,
                     "mediana_salario": 0,
+                    "promedio_edad": np.nan,
                     "hogares_lead": 0,
                     "hogares_documentado": 0,
+                    "demografia": {
+                        "estudiantes": calcular_demografia_por_ids([], info_personal_df),
+                        "familiares": calcular_demografia_por_ids([], info_personal_df),
+                    },
                 }
         else:
             metricas[quintil] = {
@@ -293,8 +464,13 @@ def calcular_metricas_estudiantes_familia(
                 "promedio_hijos": 0,
                 "promedio_salario": 0,
                 "mediana_salario": 0,
+                "promedio_edad": np.nan,
                 "hogares_lead": 0,
                 "hogares_documentado": 0,
+                "demografia": {
+                    "estudiantes": calcular_demografia_por_ids([], info_personal_df),
+                    "familiares": calcular_demografia_por_ids([], info_personal_df),
+                },
             }
 
     return metricas, no_empleo_formal
@@ -326,6 +502,62 @@ def mostrar_tarjeta_no_empleo(
     st.markdown(html_content, unsafe_allow_html=True)
 
 
+def formatear_edad_promedio(promedio_edad):
+    """Formatea la edad promedio para mostrar en tarjetas."""
+    if pd.notna(promedio_edad) and promedio_edad > 0:
+        return f"{int(np.floor(promedio_edad))} años"
+    return "N/D"
+
+
+def formatear_porcentaje(valor):
+    """Formatea porcentaje para tarjetas."""
+    if valor is None or pd.isna(valor):
+        return "N/D"
+    return f"{valor:.1f}%"
+
+
+def formatear_porcentaje_detalle(valor):
+    """Formatea porcentaje con mayor precision para bloques de detalle."""
+    if valor is None or pd.isna(valor):
+        return "N/D"
+    return f"{valor:.2f}%"
+
+
+def mostrar_fila_demografia_grupo(titulo_grupo, demografia, color="#3498db"):
+    """Muestra una fila de 3 tarjetas para un grupo."""
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.markdown(
+            f'<div style="background: linear-gradient(135deg, {color}15 0%, {color}30 100%); border-left: 5px solid {color}; border-radius: 8px; padding: 12px 20px; margin: 10px 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1); text-align: center;"><h3 style="color: {color}; margin: 0 0 5px 0; font-size: 1.0em;">🎂 {titulo_grupo} - Edad Promedio</h3><p style="margin: 0; color: {color}; font-size: 1.8em; font-weight: bold;">{formatear_edad_promedio(demografia.get("promedio_edad", np.nan))}</p></div>',
+            unsafe_allow_html=True,
+        )
+    with col2:
+        st.markdown(
+            f'<div style="background: linear-gradient(135deg, {color}15 0%, {color}30 100%); border-left: 5px solid {color}; border-radius: 8px; padding: 12px 20px; margin: 10px 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1); text-align: center;"><h3 style="color: {color}; margin: 0 0 5px 0; font-size: 1.0em;">📊 {titulo_grupo} - Mediana Edad</h3><p style="margin: 0; color: {color}; font-size: 1.8em; font-weight: bold;">{formatear_edad_promedio(demografia.get("mediana_edad", np.nan))}</p></div>',
+            unsafe_allow_html=True,
+        )
+    with col3:
+        hombres = formatear_porcentaje(demografia.get("porcentaje_hombres"))
+        mujeres = formatear_porcentaje(demografia.get("porcentaje_mujeres"))
+        st.markdown(
+            f'<div style="background: linear-gradient(135deg, {color}15 0%, {color}30 100%); border-left: 5px solid {color}; border-radius: 8px; padding: 12px 20px; margin: 10px 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1); text-align: center;"><h3 style="color: {color}; margin: 0 0 8px 0; font-size: 1.0em;">👫 {titulo_grupo} - Sexo</h3><div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;"><div><p style="margin: 0; color: #666; font-size: 0.85em;">♂ Masculino</p><p style="margin: 4px 0 0 0; color: {color}; font-size: 1.3em; font-weight: bold;">{hombres}</p></div><div><p style="margin: 0; color: #666; font-size: 0.85em;">♀ Femenino</p><p style="margin: 4px 0 0 0; color: {color}; font-size: 1.3em; font-weight: bold;">{mujeres}</p></div></div></div>',
+            unsafe_allow_html=True,
+        )
+
+
+def mostrar_fila_estadisticas_generales_dual(demografia_general, color="#3498db"):
+    """Muestra estadisticas generales separadas para estudiantes y familiares."""
+    st.markdown("#### 👥 Estadísticas Generales - Estudiantes")
+    mostrar_fila_demografia_grupo(
+        "Estudiantes", demografia_general.get("estudiantes", {}), color=color
+    )
+    st.markdown("#### 👨‍👩‍👧‍👦 Estadísticas Generales - Familiares")
+    mostrar_fila_demografia_grupo(
+        "Familiares", demografia_general.get("familiares", {}), color=color
+    )
+
+
 def mostrar_tarjeta_quintil(
     quintil,
     metricas,
@@ -341,10 +573,14 @@ def mostrar_tarjeta_quintil(
     promedio_hijos = metricas["promedio_hijos"]
     promedio_salario = metricas["promedio_salario"]
     mediana_salario = metricas.get("mediana_salario", 0)
+    promedio_edad = metricas.get("promedio_edad", np.nan)
     porcentaje_hombres = metricas.get("porcentaje_hombres", 0)
     porcentaje_mujeres = metricas.get("porcentaje_mujeres", 0)
     hogares_lead = metricas.get("hogares_lead", 0)
     hogares_documentado = metricas.get("hogares_documentado", 0)
+    demografia = metricas.get("demografia", {})
+    demo_estudiantes = demografia.get("estudiantes", {})
+    demo_familiares = demografia.get("familiares", {})
 
     # Colores según quintil
     colores = {
@@ -356,16 +592,46 @@ def mostrar_tarjeta_quintil(
     }
 
     color = colores.get(quintil, "#3498db")
+    edad_promedio_texto = formatear_edad_promedio(promedio_edad)
 
     tipo_block = ""
     if mostrar_desglose_tipo:
         tipo_block = f'<div style="background: white; padding: 15px; border-radius: 8px; margin-top: 15px;"><p style="margin: 0; color: #666; font-size: 0.85em;">🏷️ Tipo de hogar</p><div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 10px;"><div style="background: {color}12; padding: 12px; border-radius: 8px;"><p style="margin: 0; color: #666; font-size: 0.8em;">👥 Hogares Leads</p><p style="margin: 5px 0 0 0; color: {color}; font-size: 1.5em; font-weight: bold;">{hogares_lead:,}</p></div><div style="background: {color}12; padding: 12px; border-radius: 8px;"><p style="margin: 0; color: #666; font-size: 0.8em;">📄 Hogares Documentados</p><p style="margin: 5px 0 0 0; color: {color}; font-size: 1.5em; font-weight: bold;">{hogares_documentado:,}</p></div></div></div>'
 
-    sexo_block = ""
-    if mostrar_sexo:
-        sexo_block = f'<div style="background: white; padding: 15px; border-radius: 8px; margin-top: 15px;"><p style="margin: 0; color: #666; font-size: 0.85em;">👫 Distribución por sexo</p><div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 10px;"><div><p style="margin: 0; color: #666; font-size: 0.85em;">♂ Hombres</p><p style="margin: 5px 0 0 0; color: {color}; font-size: 1.5em; font-weight: bold;">{porcentaje_hombres:.2f}%</p></div><div><p style="margin: 0; color: #666; font-size: 0.85em;">♀ Mujeres</p><p style="margin: 5px 0 0 0; color: {color}; font-size: 1.5em; font-weight: bold;">{porcentaje_mujeres:.2f}%</p></div></div></div>'
+    sexo_hombres = demo_estudiantes.get("porcentaje_hombres")
+    sexo_mujeres = demo_estudiantes.get("porcentaje_mujeres")
+    sexo_block = (
+        f'<div style="background: white; padding: 15px; border-radius: 8px; margin-top: 15px;">'
+        f'<p style="margin: 0; color: #666; font-size: 0.95em;">🧑‍🤝‍🧑 Distribución por sexo</p>'
+        f'<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 12px;">'
+        f'<div>'
+        f'<p style="margin: 0; color: #666; font-size: 0.9em;">♂ Hombres</p>'
+        f'<p style="margin: 10px 0 0 0; color: {color}; font-size: 2em; font-weight: bold;">{formatear_porcentaje_detalle(sexo_hombres)}</p>'
+        f"</div>"
+        f'<div>'
+        f'<p style="margin: 0; color: #666; font-size: 0.9em;">♀ Mujeres</p>'
+        f'<p style="margin: 10px 0 0 0; color: {color}; font-size: 2em; font-weight: bold;">{formatear_porcentaje_detalle(sexo_mujeres)}</p>'
+        f"</div>"
+        f"</div>"
+        f"</div>"
+    )
 
-    html_content = f'<div style="background: linear-gradient(135deg, {color}15 0%, {color}30 100%); border-left: 5px solid {color}; border-radius: 10px; padding: 20px; margin: 10px 0; box-shadow: 0 4px 6px rgba(0,0,0,0.1);"><h3 style="color: {color}; margin: 0 0 15px 0;">🏆 Quintil {quintil}</h3><p style="color: #666; font-size: 0.9em; margin: 0 0 15px 0;">Rango salarial: ${rango["min"]:,.2f} - ${rango["max"]:,.2f}</p><div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;"><div style="background: white; padding: 15px; border-radius: 8px;"><p style="margin: 0; color: #666; font-size: 0.85em;">👥 {label}</p><p style="margin: 5px 0 0 0; color: {color}; font-size: 1.8em; font-weight: bold;">{cantidad:,}</p></div><div style="background: white; padding: 15px; border-radius: 8px;"><p style="margin: 0; color: #666; font-size: 0.85em;">👶 Promedio hijos</p><p style="margin: 5px 0 0 0; color: {color}; font-size: 1.8em; font-weight: bold;">{promedio_hijos}</p></div></div><div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 15px;"><div style="background: white; padding: 15px; border-radius: 8px;"><p style="margin: 0; color: #666; font-size: 0.85em;">💰 Salario promedio</p><p style="margin: 5px 0 0 0; color: {color}; font-size: 1.8em; font-weight: bold;">${promedio_salario:,.2f}</p></div><div style="background: white; padding: 15px; border-radius: 8px;"><p style="margin: 0; color: #666; font-size: 0.85em;">📊 Mediana salario</p><p style="margin: 5px 0 0 0; color: {color}; font-size: 1.8em; font-weight: bold;">${mediana_salario:,.2f}</p></div></div>{tipo_block}{sexo_block}</div>'
+    demografia_block = (
+        f'<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 15px;">'
+        f'<div style="background: white; padding: 15px; border-radius: 8px;">'
+        f'<p style="margin: 0; color: #666; font-size: 0.85em;">👥 Estudiantes</p>'
+        f'<p style="margin: 5px 0 0 0; color: {color}; font-size: 0.95em; font-weight: bold;">Prom: {formatear_edad_promedio(demo_estudiantes.get("promedio_edad", np.nan))} | Med: {formatear_edad_promedio(demo_estudiantes.get("mediana_edad", np.nan))}</p>'
+        f'<p style="margin: 6px 0 0 0; color: #666; font-size: 0.9em;">♂ {formatear_porcentaje(demo_estudiantes.get("porcentaje_hombres"))} | ♀ {formatear_porcentaje(demo_estudiantes.get("porcentaje_mujeres"))}</p>'
+        f"</div>"
+        f'<div style="background: white; padding: 15px; border-radius: 8px;">'
+        f'<p style="margin: 0; color: #666; font-size: 0.85em;">👨‍👩‍👧‍👦 Familiares</p>'
+        f'<p style="margin: 5px 0 0 0; color: {color}; font-size: 0.95em; font-weight: bold;">Prom: {formatear_edad_promedio(demo_familiares.get("promedio_edad", np.nan))} | Med: {formatear_edad_promedio(demo_familiares.get("mediana_edad", np.nan))}</p>'
+        f'<p style="margin: 6px 0 0 0; color: #666; font-size: 0.9em;">♂ {formatear_porcentaje(demo_familiares.get("porcentaje_hombres"))} | ♀ {formatear_porcentaje(demo_familiares.get("porcentaje_mujeres"))}</p>'
+        f"</div>"
+        f"</div>"
+    )
+
+    html_content = f'<div style="background: linear-gradient(135deg, {color}15 0%, {color}30 100%); border-left: 5px solid {color}; border-radius: 10px; padding: 20px; margin: 10px 0; box-shadow: 0 4px 6px rgba(0,0,0,0.1);"><h3 style="color: {color}; margin: 0 0 15px 0;">🏆 Quintil {quintil}</h3><p style="color: #666; font-size: 0.9em; margin: 0 0 15px 0;">Rango salarial: ${rango["min"]:,.2f} - ${rango["max"]:,.2f}</p><div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;"><div style="background: white; padding: 15px; border-radius: 8px;"><p style="margin: 0; color: #666; font-size: 0.85em;">👥 {label}</p><p style="margin: 5px 0 0 0; color: {color}; font-size: 1.8em; font-weight: bold;">{cantidad:,}</p></div><div style="background: white; padding: 15px; border-radius: 8px;"><p style="margin: 0; color: #666; font-size: 0.85em;">👶 Promedio hijos</p><p style="margin: 5px 0 0 0; color: {color}; font-size: 1.8em; font-weight: bold;">{int(np.floor(promedio_hijos + 0.5))}</p></div></div><div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; margin-top: 15px;"><div style="background: white; padding: 15px; border-radius: 8px;"><p style="margin: 0; color: #666; font-size: 0.85em;">💰 Salario promedio</p><p style="margin: 5px 0 0 0; color: {color}; font-size: 1.8em; font-weight: bold;">${promedio_salario:,.2f}</p></div><div style="background: white; padding: 15px; border-radius: 8px;"><p style="margin: 0; color: #666; font-size: 0.85em;">📊 Mediana salario</p><p style="margin: 5px 0 0 0; color: {color}; font-size: 1.8em; font-weight: bold;">${mediana_salario:,.2f}</p></div><div style="background: white; padding: 15px; border-radius: 8px;"><p style="margin: 0; color: #666; font-size: 0.85em;">🎂 Edad promedio</p><p style="margin: 5px 0 0 0; color: {color}; font-size: 1.8em; font-weight: bold;">{edad_promedio_texto}</p></div></div>{tipo_block}{sexo_block}{demografia_block}</div>'
 
     st.markdown(html_content, unsafe_allow_html=True)
 
@@ -411,6 +677,11 @@ mostrar_desglose_tipo = "Tipo" in estudiantes_filtrados.columns
 
 # Tarjeta de población total
 total_poblacion = estudiantes_filtrados["IDENTIFICACION"].nunique()
+demografia_general = calcular_demografia_estudiantes_familiares(
+    estudiantes_filtrados["IDENTIFICACION"].dropna().drop_duplicates().values,
+    universo_fam_df,
+    info_personal_df,
+)
 
 # Calcular total de hogares
 total_hogares = (
@@ -461,6 +732,8 @@ with col2:
     """,
         unsafe_allow_html=True,
     )
+
+mostrar_fila_estadisticas_generales_dual(demografia_general, color="#3498db")
 
 st.markdown("### 💰 Distribución por Quintiles")
 
