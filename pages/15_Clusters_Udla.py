@@ -355,6 +355,51 @@ def _overview_table(
     return pd.DataFrame(rows)
 
 
+def _cluster_university_pivot(
+    cluster_tables: dict[str, pd.DataFrame], cluster_order: list[str]
+) -> pd.DataFrame:
+    rows: list[pd.DataFrame] = []
+    for cluster_name in cluster_order:
+        table = cluster_tables.get(cluster_name, pd.DataFrame()).copy()
+        if table.empty:
+            continue
+        current = table[["Universidad", "Cantidad de personas"]].copy()
+        current["Cluster"] = cluster_name
+        rows.append(current[["Cluster", "Universidad", "Cantidad de personas"]])
+
+    if not rows:
+        return pd.DataFrame()
+
+    stacked = pd.concat(rows, ignore_index=True)
+    stacked["Cantidad de personas"] = (
+        pd.to_numeric(stacked["Cantidad de personas"], errors="coerce")
+        .fillna(0)
+        .astype(int)
+    )
+
+    pivot = (
+        stacked.pivot_table(
+            index="Cluster",
+            columns="Universidad",
+            values="Cantidad de personas",
+            aggfunc="sum",
+            fill_value=0,
+        )
+        .sort_index(axis=1)
+        .reset_index()
+    )
+
+    ordered_rows = [name for name in cluster_order if name in pivot["Cluster"].tolist()]
+    if ordered_rows:
+        pivot["Cluster"] = pd.Categorical(
+            pivot["Cluster"], categories=ordered_rows, ordered=True
+        )
+        pivot = pivot.sort_values("Cluster").reset_index(drop=True)
+        pivot["Cluster"] = pivot["Cluster"].astype(str)
+
+    return pivot
+
+
 def _udla_reference_table(summary_df: pd.DataFrame) -> pd.DataFrame:
     if summary_df.empty:
         return summary_df
@@ -780,19 +825,24 @@ with tab_universidades:
             },
         )
 
-        sub_tabs = st.tabs(university_cluster_order)
-        for cluster_tab, cluster_name in zip(sub_tabs, university_cluster_order):
-            with cluster_tab:
-                st.dataframe(
-                    university_cluster_tables.get(cluster_name, pd.DataFrame()),
-                    use_container_width=True,
-                    hide_index=True,
-                    column_config={
-                        "Cantidad de personas": st.column_config.NumberColumn(
-                            "Cantidad de personas", format="%d"
-                        ),
-                    },
-                )
+        st.markdown("#### Distribucion por cluster y universidad")
+        pivot_df = _cluster_university_pivot(
+            university_cluster_tables, university_cluster_order
+        )
+        if pivot_df.empty:
+            st.info("No hay datos para mostrar la matriz cluster x universidad.")
+        else:
+            pivot_config = {
+                col: st.column_config.NumberColumn(col, format="%d")
+                for col in pivot_df.columns
+                if col != "Cluster"
+            }
+            st.dataframe(
+                pivot_df,
+                use_container_width=True,
+                hide_index=True,
+                column_config=pivot_config,
+            )
 
         with st.expander("Ver referencia de clusters UDLA", expanded=False):
             st.dataframe(
