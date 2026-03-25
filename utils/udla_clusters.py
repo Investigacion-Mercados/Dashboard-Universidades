@@ -33,6 +33,14 @@ PROFILE_LABELS = {
 }
 
 
+def _reference_debt_ranges(student_df: pd.DataFrame) -> dict[int, dict[str, float]]:
+    udla_source = student_df[
+        (student_df["Universidad"] == "UDLA")
+        & (student_df["fuente_archivo"] == "UDLA")
+    ].copy()
+    return calcular_rangos_quintiles(udla_source["deuda_hogar"])
+
+
 def _clean_text(series: pd.Series, default: str = "Sin dato") -> pd.Series:
     return (
         pd.Series(series)
@@ -72,13 +80,76 @@ def _stable_seed(value: str) -> int:
     return int(digest[:8], 16)
 
 
+def _prepare_cluster_base(
+    student_df: pd.DataFrame,
+    income_ranges: dict[int, dict[str, float]],
+    debt_ranges: dict[int, dict[str, float]],
+) -> pd.DataFrame:
+    base = student_df.copy()
+    if base.empty:
+        return base
+
+    base["tipo_estudiante"] = _clean_text(base["tipo_estudiante"])
+    base["facultad"] = _clean_text(base["unidad_academica"])
+    base["carrera"] = _clean_text(base["carrera"])
+    base["sexo_estudiante"] = _clean_text(
+        base["sexo_estudiante"], default="DESCONOCIDO"
+    )
+    base["estado_hogar"] = _clean_text(base["estado_hogar"], default="Desconocido")
+    base["edad_estudiante"] = pd.to_numeric(base["edad_estudiante"], errors="coerce")
+    base["hijos_hogar"] = (
+        pd.to_numeric(base["hijos_hogar"], errors="coerce")
+        .fillna(0)
+        .clip(lower=0)
+        .round()
+        .astype(int)
+    )
+    base["hijos_hogar_promedio"] = (
+        base.groupby("hogar_id")["hijos_hogar"].transform("mean").fillna(0.0)
+    )
+    base["primera_generacion"] = (
+        pd.to_numeric(base["primera_generacion"], errors="coerce")
+        .fillna(0)
+        .clip(lower=0, upper=1)
+        .astype(int)
+    )
+    base["estudiante_quito"] = (
+        base["IDENTIFICACION"].astype(str).str.strip().str.startswith("17").astype(int)
+    )
+    base["quintil_ingreso_hogar"] = base["salario_hogar"].apply(
+        lambda value: asignar_quintil_por_rangos(value, income_ranges, vacio="Sin empleo")
+    )
+    base["quintil_ingreso_num"] = (
+        pd.to_numeric(
+            base["quintil_ingreso_hogar"].replace({"Sin empleo": "0"}),
+            errors="coerce",
+        )
+        .fillna(0)
+        .astype(int)
+    )
+    base["quintil_deuda_hogar"] = base["deuda_hogar"].apply(
+        lambda value: asignar_quintil_por_rangos(value, debt_ranges, vacio="Sin deuda")
+    )
+    base["quintil_deuda_num"] = (
+        pd.to_numeric(
+            base["quintil_deuda_hogar"].replace({"Sin deuda": "0"}),
+            errors="coerce",
+        )
+        .fillna(0)
+        .astype(int)
+    )
+    return base
+
+
 @st.cache_data(show_spinner=False)
 def build_udla_cluster_base() -> dict[str, Any]:
     student_df, income_ranges = build_student_feature_base()
-    udla = student_df[
+    udla_raw = student_df[
         (student_df["Universidad"] == "UDLA")
         & (student_df["fuente_archivo"] == "UDLA")
     ].copy()
+    debt_ranges = _reference_debt_ranges(student_df)
+    udla = _prepare_cluster_base(udla_raw, income_ranges.get("UDLA", {}), debt_ranges)
 
     if udla.empty:
         return {
@@ -87,58 +158,22 @@ def build_udla_cluster_base() -> dict[str, Any]:
             "debt_ranges": {},
         }
 
-    udla["tipo_estudiante"] = _clean_text(udla["tipo_estudiante"])
-    udla["facultad"] = _clean_text(udla["unidad_academica"])
-    udla["carrera"] = _clean_text(udla["carrera"])
-    udla["sexo_estudiante"] = _clean_text(udla["sexo_estudiante"], default="DESCONOCIDO")
-    udla["estado_hogar"] = _clean_text(udla["estado_hogar"], default="Desconocido")
-    udla["edad_estudiante"] = pd.to_numeric(udla["edad_estudiante"], errors="coerce")
-    udla["hijos_hogar"] = (
-        pd.to_numeric(udla["hijos_hogar"], errors="coerce")
-        .fillna(0)
-        .clip(lower=0)
-        .round()
-        .astype(int)
-    )
-    udla["hijos_hogar_promedio"] = (
-        udla.groupby("hogar_id")["hijos_hogar"].transform("mean").fillna(0.0)
-    )
-    udla["primera_generacion"] = (
-        pd.to_numeric(udla["primera_generacion"], errors="coerce")
-        .fillna(0)
-        .clip(lower=0, upper=1)
-        .astype(int)
-    )
-    udla["estudiante_quito"] = (
-        udla["IDENTIFICACION"].astype(str).str.strip().str.startswith("17").astype(int)
-    )
-    udla["quintil_ingreso_hogar"] = _clean_text(
-        udla["quintil_institucion"], default="Sin empleo"
-    )
-    udla["quintil_ingreso_num"] = (
-        pd.to_numeric(
-            udla["quintil_ingreso_hogar"].replace({"Sin empleo": "0"}),
-            errors="coerce",
-        )
-        .fillna(0)
-        .astype(int)
-    )
-
-    debt_ranges = calcular_rangos_quintiles(udla["deuda_hogar"])
-    udla["quintil_deuda_hogar"] = udla["deuda_hogar"].apply(
-        lambda value: asignar_quintil_por_rangos(value, debt_ranges, vacio="Sin deuda")
-    )
-    udla["quintil_deuda_num"] = (
-        pd.to_numeric(
-            udla["quintil_deuda_hogar"].replace({"Sin deuda": "0"}),
-            errors="coerce",
-        )
-        .fillna(0)
-        .astype(int)
-    )
-
     return {
         "students": udla,
+        "income_ranges": income_ranges.get("UDLA", {}),
+        "debt_ranges": debt_ranges,
+    }
+
+
+@st.cache_data(show_spinner=False)
+def build_university_cluster_base() -> dict[str, Any]:
+    student_df, income_ranges = build_student_feature_base()
+    debt_ranges = _reference_debt_ranges(student_df)
+    all_students = _prepare_cluster_base(
+        student_df, income_ranges.get("UDLA", {}), debt_ranges
+    )
+    return {
+        "students": all_students,
         "income_ranges": income_ranges.get("UDLA", {}),
         "debt_ranges": debt_ranges,
     }
@@ -160,6 +195,58 @@ def _build_feature_frame(df: pd.DataFrame) -> pd.DataFrame:
     return pd.concat([numeric, dummies], axis=1)
 
 
+def _fit_feature_template(df: pd.DataFrame) -> dict[str, Any]:
+    numeric = df[CLUSTER_NUMERIC_COLUMNS].apply(pd.to_numeric, errors="coerce")
+    numeric_fill = numeric.median().fillna(0.0).to_dict()
+    categorical_levels = {
+        col: sorted(
+            (
+                df[col]
+                .fillna("DESCONOCIDO")
+                .astype(str)
+                .str.strip()
+                .replace("", "DESCONOCIDO")
+            )
+            .unique()
+            .tolist()
+        )
+        for col in CLUSTER_CATEGORICAL_COLUMNS
+    }
+    return {
+        "numeric_fill": numeric_fill,
+        "categorical_levels": categorical_levels,
+    }
+
+
+def _build_feature_frame_from_template(
+    df: pd.DataFrame, template: dict[str, Any]
+) -> pd.DataFrame:
+    numeric = df[CLUSTER_NUMERIC_COLUMNS].apply(pd.to_numeric, errors="coerce")
+    for col in CLUSTER_NUMERIC_COLUMNS:
+        numeric[col] = numeric[col].fillna(float(template["numeric_fill"].get(col, 0.0)))
+    numeric = numeric.fillna(0.0)
+
+    categoricals = (
+        df[CLUSTER_CATEGORICAL_COLUMNS]
+        .fillna("DESCONOCIDO")
+        .astype(str)
+        .apply(lambda col: col.str.strip().replace("", "DESCONOCIDO"))
+    )
+    dummies = pd.get_dummies(
+        categoricals, prefix=CLUSTER_CATEGORICAL_COLUMNS, dtype=float
+    )
+    expected_dummy_cols: list[str] = []
+    for cat_col in CLUSTER_CATEGORICAL_COLUMNS:
+        expected_dummy_cols.extend(
+            [
+                f"{cat_col}_{value}"
+                for value in template["categorical_levels"].get(cat_col, [])
+            ]
+        )
+    dummies = dummies.reindex(columns=expected_dummy_cols, fill_value=0.0)
+    return pd.concat([numeric, dummies], axis=1)
+
+
 def _scale_cluster_matrix(feature_df: pd.DataFrame) -> np.ndarray:
     if feature_df.empty:
         return np.empty((0, 0), dtype=float)
@@ -178,6 +265,42 @@ def _scale_cluster_matrix(feature_df: pd.DataFrame) -> np.ndarray:
         if len(dummy_indices) > 1:
             scaled[:, dummy_indices] /= np.sqrt(len(dummy_indices))
 
+    return scaled
+
+
+def _fit_scaler(feature_df: pd.DataFrame) -> dict[str, Any]:
+    if feature_df.empty:
+        return {"columns": [], "mean": np.array([]), "std": np.array([]), "weights": np.array([])}
+
+    matrix = feature_df.to_numpy(dtype=float)
+    mean = np.nanmean(matrix, axis=0)
+    matrix = np.where(np.isnan(matrix), mean, matrix)
+    std = np.nanstd(matrix, axis=0)
+    std = np.where(std == 0, 1.0, std)
+    columns = feature_df.columns.tolist()
+    weights = np.ones(len(columns), dtype=float)
+
+    for cat_col in CLUSTER_CATEGORICAL_COLUMNS:
+        prefix = f"{cat_col}_"
+        dummy_indices = [i for i, c in enumerate(columns) if c.startswith(prefix)]
+        if len(dummy_indices) > 1:
+            weights[dummy_indices] = 1.0 / np.sqrt(len(dummy_indices))
+
+    return {"columns": columns, "mean": mean, "std": std, "weights": weights}
+
+
+def _transform_scaled(feature_df: pd.DataFrame, scaler: dict[str, Any]) -> np.ndarray:
+    columns = scaler.get("columns", [])
+    if not columns:
+        return np.empty((len(feature_df), 0), dtype=float)
+
+    matrix = feature_df[columns].to_numpy(dtype=float)
+    mean = np.asarray(scaler["mean"], dtype=float)
+    std = np.asarray(scaler["std"], dtype=float)
+    weights = np.asarray(scaler["weights"], dtype=float)
+    matrix = np.where(np.isnan(matrix), mean, matrix)
+    scaled = (matrix - mean) / std
+    scaled = scaled * weights
     return scaled
 
 
@@ -428,6 +551,33 @@ def _profile_frame(summary: pd.DataFrame) -> pd.DataFrame:
     return profile
 
 
+def _nearest_cluster_assignment(
+    scaled_matrix: np.ndarray,
+    centroids_df: pd.DataFrame,
+    radius_by_cluster: dict[int, float],
+) -> tuple[np.ndarray, np.ndarray]:
+    if scaled_matrix.size == 0 or centroids_df.empty:
+        return np.array([], dtype=int), np.array([], dtype=float)
+
+    centroid_ids = centroids_df.index.to_numpy(dtype=int)
+    centroid_matrix = centroids_df.to_numpy(dtype=float)
+    diffs = scaled_matrix[:, None, :] - centroid_matrix[None, :, :]
+    distances = np.linalg.norm(diffs, axis=2)
+    nearest_idx = np.argmin(distances, axis=1)
+    nearest_cluster_ids = centroid_ids[nearest_idx]
+    nearest_distances = distances[np.arange(len(scaled_matrix)), nearest_idx]
+    assigned = np.array(
+        [
+            cluster_id
+            if float(distance) <= float(radius_by_cluster.get(int(cluster_id), np.inf))
+            else 0
+            for cluster_id, distance in zip(nearest_cluster_ids, nearest_distances)
+        ],
+        dtype=int,
+    )
+    return assigned, nearest_distances
+
+
 @st.cache_data(show_spinner=False)
 def run_udla_cluster_analysis(
     filtered_df: pd.DataFrame, min_clusters: int = 2, max_clusters: int = 6
@@ -478,4 +628,132 @@ def run_udla_cluster_analysis(
         "profile": _profile_frame(summary),
         "feature_columns": feature_df.columns.tolist(),
         "k": chosen_k,
+    }
+
+
+@st.cache_data(show_spinner=False)
+def run_university_cluster_projection(
+    udla_reference_df: pd.DataFrame,
+    candidate_df: pd.DataFrame | None = None,
+    min_clusters: int = 2,
+    max_clusters: int = 6,
+) -> dict[str, Any]:
+    if udla_reference_df.empty:
+        return {
+            "students": (candidate_df.copy() if candidate_df is not None else udla_reference_df.copy()),
+            "udla_students": pd.DataFrame(),
+            "udla_summary": pd.DataFrame(),
+            "cluster_tables": {},
+            "cluster_order": [],
+            "k": 0,
+            "other_count": 0,
+        }
+
+    candidates = candidate_df.copy() if candidate_df is not None else udla_reference_df.copy()
+    if candidates.empty:
+        return {
+            "students": candidates,
+            "udla_students": pd.DataFrame(),
+            "udla_summary": pd.DataFrame(),
+            "cluster_tables": {},
+            "cluster_order": [],
+            "k": 0,
+            "other_count": 0,
+        }
+
+    udla_df = udla_reference_df[
+        (udla_reference_df["Universidad"] == "UDLA")
+        & (udla_reference_df["fuente_archivo"] == "UDLA")
+    ].copy()
+    if udla_df.empty:
+        return {
+            "students": candidates,
+            "udla_students": udla_df,
+            "udla_summary": pd.DataFrame(),
+            "cluster_tables": {},
+            "cluster_order": [],
+            "k": 0,
+            "other_count": 0,
+        }
+
+    template = _fit_feature_template(udla_df)
+    udla_feature_df = _build_feature_frame_from_template(udla_df, template)
+    udla_labels, chosen_k = _assign_clusters(
+        udla_feature_df, min_clusters=min_clusters, max_clusters=max_clusters
+    )
+
+    scaler = _fit_scaler(udla_feature_df)
+    udla_scaled = _transform_scaled(udla_feature_df, scaler)
+    udla_clustered = udla_df.copy()
+    udla_clustered["cluster_id"] = udla_labels
+    udla_summary, label_map = _cluster_summary(udla_clustered)
+    udla_clustered["cluster"] = udla_clustered["cluster_id"].map(label_map)
+
+    udla_scaled_df = pd.DataFrame(
+        udla_scaled, columns=udla_feature_df.columns.tolist(), index=udla_df.index
+    )
+    centroids_df = (
+        udla_scaled_df.assign(cluster_id=udla_labels)
+        .groupby("cluster_id", as_index=True)[udla_feature_df.columns.tolist()]
+        .mean()
+    )
+
+    radius_by_cluster: dict[int, float] = {}
+    for cluster_id in sorted(np.unique(udla_labels).tolist()):
+        mask = udla_clustered["cluster_id"] == int(cluster_id)
+        points = udla_scaled_df.loc[mask]
+        centroid = centroids_df.loc[int(cluster_id)].to_numpy(dtype=float)
+        distances = np.linalg.norm(points.to_numpy(dtype=float) - centroid, axis=1)
+        radius_by_cluster[int(cluster_id)] = float(distances.max()) * 1.001 + 1e-9
+
+    all_feature_df = _build_feature_frame_from_template(candidates, template)
+    all_scaled = _transform_scaled(all_feature_df, scaler)
+    assigned_ids, assigned_distances = _nearest_cluster_assignment(
+        all_scaled, centroids_df, radius_by_cluster
+    )
+
+    projected = candidates.copy()
+    projected["cluster_id_udla"] = assigned_ids
+    projected["distancia_cluster_udla"] = assigned_distances
+    projected["cluster_udla"] = projected["cluster_id_udla"].map(label_map)
+    projected.loc[projected["cluster_id_udla"] == 0, "cluster_udla"] = "Otro cluster"
+
+    cluster_order = udla_summary["cluster"].tolist()
+    if (projected["cluster_udla"] == "Otro cluster").any():
+        cluster_order.append("Otro cluster")
+
+    counts = (
+        projected.groupby(["cluster_udla", "Universidad"], as_index=False)["IDENTIFICACION"]
+        .nunique()
+        .rename(columns={"cluster_udla": "Cluster", "Universidad": "Universidad", "IDENTIFICACION": "Cantidad de personas"})
+    )
+
+    universities = sorted(projected["Universidad"].dropna().astype(str).str.strip().unique().tolist())
+    cluster_tables: dict[str, pd.DataFrame] = {}
+    for cluster_name in cluster_order:
+        base_table = pd.DataFrame(
+            {"Cluster": [cluster_name] * len(universities), "Universidad": universities}
+        )
+        table = base_table.merge(
+            counts[counts["Cluster"] == cluster_name],
+            on=["Cluster", "Universidad"],
+            how="left",
+        )
+        table["Cantidad de personas"] = (
+            pd.to_numeric(table["Cantidad de personas"], errors="coerce").fillna(0).astype(int)
+        )
+        cluster_tables[cluster_name] = table.sort_values(
+            ["Cantidad de personas", "Universidad"],
+            ascending=[False, True],
+        ).reset_index(drop=True)
+
+    return {
+        "students": projected,
+        "udla_students": udla_clustered,
+        "udla_summary": udla_summary,
+        "cluster_tables": cluster_tables,
+        "cluster_order": cluster_order,
+        "k": chosen_k,
+        "other_count": int((projected["cluster_udla"] == "Otro cluster").sum()),
+        "radius_by_cluster": radius_by_cluster,
     }

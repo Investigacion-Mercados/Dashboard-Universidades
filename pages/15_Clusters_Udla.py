@@ -7,7 +7,12 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from utils.udla_clusters import build_udla_cluster_base, run_udla_cluster_analysis
+from utils.udla_clusters import (
+    build_udla_cluster_base,
+    build_university_cluster_base,
+    run_udla_cluster_analysis,
+    run_university_cluster_projection,
+)
 
 st.set_page_config(page_title="Clusters Udla", page_icon="C", layout="wide")
 
@@ -220,6 +225,54 @@ def _detail_cluster_table(df: pd.DataFrame) -> pd.DataFrame:
     return out[columns].rename(columns=rename_map)
 
 
+def _overview_table(
+    cluster_tables: dict[str, pd.DataFrame], cluster_order: list[str]
+) -> pd.DataFrame:
+    rows = []
+    for cluster_name in cluster_order:
+        table = cluster_tables.get(cluster_name, pd.DataFrame()).copy()
+        if table.empty:
+            continue
+        rows.append(
+            {
+                "Cluster": cluster_name,
+                "Cantidad de personas": int(table["Cantidad de personas"].sum()),
+                "Universidades con personas": int(
+                    (
+                        pd.to_numeric(
+                            table["Cantidad de personas"], errors="coerce"
+                        ).fillna(0)
+                        > 0
+                    ).sum()
+                ),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _udla_reference_table(summary_df: pd.DataFrame) -> pd.DataFrame:
+    if summary_df.empty:
+        return summary_df
+
+    columns = [
+        "cluster",
+        "estudiantes",
+        "hogares",
+        "quintil_ingreso_modal",
+        "quintil_deuda_modal",
+        "tipo_estudiantes_pg",
+    ]
+    rename_map = {
+        "cluster": "Cluster",
+        "estudiantes": "Estudiantes UDLA",
+        "hogares": "Hogares UDLA",
+        "quintil_ingreso_modal": "Q ingreso UDLA",
+        "quintil_deuda_modal": "Q deuda UDLA",
+        "tipo_estudiantes_pg": "Tipo estudiantes",
+    }
+    return summary_df[columns].rename(columns=rename_map)
+
+
 def _distribution_chart(
     df: pd.DataFrame,
     column: str,
@@ -289,10 +342,12 @@ st.caption(
 
 with st.spinner("Preparando universo UDLA..."):
     data_bundle = build_udla_cluster_base()
+    university_bundle = build_university_cluster_base()
 
 base_df = data_bundle["students"].copy()
 income_ranges = data_bundle.get("income_ranges", {})
 debt_ranges = data_bundle.get("debt_ranges", {})
+all_students_df = university_bundle["students"].copy()
 
 if base_df.empty:
     st.info("No hay datos UDLA disponibles para construir clusters.")
@@ -307,11 +362,22 @@ if filtered_df.empty:
 
 with st.spinner("Calculando clusters de estudiantes UDLA..."):
     analysis = run_udla_cluster_analysis(filtered_df)
+    external_universities_df = all_students_df[
+        all_students_df["fuente_archivo"] == "Universidades"
+    ].copy()
+    university_analysis = run_university_cluster_projection(
+        filtered_df, external_universities_df
+    )
 
 students_df = analysis["students"].copy()
 summary_df = analysis["summary"].copy()
 profile_df = analysis["profile"].copy()
 cluster_count = int(analysis.get("k", 0))
+university_cluster_tables = university_analysis.get("cluster_tables", {})
+university_cluster_order = university_analysis.get("cluster_order", [])
+projected_students_df = university_analysis.get("students", pd.DataFrame()).copy()
+udla_projection_summary = university_analysis.get("udla_summary", pd.DataFrame()).copy()
+other_cluster_count = int(university_analysis.get("other_count", 0))
 
 if students_df.empty or summary_df.empty:
     st.info("No fue posible construir clusters con los filtros seleccionados.")
@@ -326,8 +392,8 @@ metric_4.metric(
     f"{float(students_df['estudiante_quito'].mean() * 100.0):.1f}%",
 )
 
-tab_mapa, tab_perfiles, tab_detalle, tab_metodo = st.tabs(
-    ["Mapa de clusters", "Perfiles", "Detalle", "Metodologia"]
+tab_mapa, tab_perfiles, tab_detalle, tab_universidades, tab_metodo = st.tabs(
+    ["Mapa de clusters", "Perfiles", "Detalle", "Cluster Universidades", "Metodologia"]
 )
 
 with tab_mapa:
@@ -470,6 +536,72 @@ with tab_detalle:
         },
     )
 
+with tab_universidades:
+    st.caption(
+        "Esta vista usa directamente `db/Udla.xlsx` y `db/Universidades.xlsx`. "
+        "No depende del archivo activo seleccionado en el dashboard."
+    )
+
+    if projected_students_df.empty or not university_cluster_order:
+        st.info(
+            "No hay suficientes datos para proyectar universidades sobre los clusters UDLA."
+        )
+    else:
+        u1, u2, u3, u4 = st.columns(4)
+        u1.metric(
+            "Personas evaluadas",
+            f"{int(projected_students_df['IDENTIFICACION'].nunique()):,}",
+        )
+        u2.metric(
+            "Universidades",
+            f"{int(projected_students_df['Universidad'].fillna('').astype(str).str.strip().nunique()):,}",
+        )
+        u3.metric("Clusters UDLA", int(university_analysis.get("k", 0)))
+        u4.metric("Otro cluster", f"{other_cluster_count:,}")
+
+        st.dataframe(
+            _overview_table(university_cluster_tables, university_cluster_order),
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Cantidad de personas": st.column_config.NumberColumn(
+                    "Cantidad de personas", format="%d"
+                ),
+                "Universidades con personas": st.column_config.NumberColumn(
+                    "Universidades con personas", format="%d"
+                ),
+            },
+        )
+
+        sub_tabs = st.tabs(university_cluster_order)
+        for cluster_tab, cluster_name in zip(sub_tabs, university_cluster_order):
+            with cluster_tab:
+                st.dataframe(
+                    university_cluster_tables.get(cluster_name, pd.DataFrame()),
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "Cantidad de personas": st.column_config.NumberColumn(
+                            "Cantidad de personas", format="%d"
+                        ),
+                    },
+                )
+
+        with st.expander("Ver referencia de clusters UDLA", expanded=False):
+            st.dataframe(
+                _udla_reference_table(udla_projection_summary),
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Estudiantes UDLA": st.column_config.NumberColumn(
+                        "Estudiantes UDLA", format="%d"
+                    ),
+                    "Hogares UDLA": st.column_config.NumberColumn(
+                        "Hogares UDLA", format="%d"
+                    ),
+                },
+            )
+
 with tab_metodo:
     st.markdown(
         "### Como se construyen los clusters\n"
@@ -497,6 +629,14 @@ with tab_metodo:
     st.markdown(
         "El numero de clusters se elige automaticamente con el indice de "
         "Calinski-Harabasz, manteniendo grupos con tamano minimo razonable."
+    )
+    st.markdown(
+        "En la pestaña `Cluster Universidades`, los clusters se entrenan con UDLA y "
+        "luego se proyectan estudiantes de `db/Universidades.xlsx` al cluster UDLA mas "
+        "cercano. Los filtros de la pagina se usan para definir el grupo de referencia "
+        "UDLA, pero la proyeccion toma directamente todas las universidades de "
+        "`db/Universidades.xlsx`. Si una observacion cae fuera del radio maximo "
+        "observado en UDLA para ese cluster, se clasifica como `Otro cluster`."
     )
 
     range_left, range_right = st.columns(2)
