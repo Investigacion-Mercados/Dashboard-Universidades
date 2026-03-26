@@ -205,6 +205,7 @@ def _detail_cluster_table(df: pd.DataFrame) -> pd.DataFrame:
         "pct_edad_23_25",
         "pct_edad_mas_25",
         "pct_quito",
+        "pct_hogares_todos_con_ingreso",
         "quintil_ingreso_modal",
         "hijos_promedio_entero",
         "hogares_con_deuda_q",
@@ -220,6 +221,7 @@ def _detail_cluster_table(df: pd.DataFrame) -> pd.DataFrame:
         "pct_edad_23_25": "23-25 anos",
         "pct_edad_mas_25": "Mas de 25 anos",
         "pct_quito": "Es de Quito (%)",
+        "pct_hogares_todos_con_ingreso": "Hogares todos aportan en hogar (%)",
         "quintil_ingreso_modal": "Quintil ingresos",
         "hijos_promedio_entero": "Promedio hijos",
         "hogares_con_deuda_q": "Hogares con deuda (Q deuda)",
@@ -426,6 +428,7 @@ def _detail_chart_table(
     ingreso_order = ["Sin empleo", "1", "2", "3", "4", "5"]
     hijos_order = ["0", "1", "2", "3", "4", "5+"]
     deuda_order = ["Sin deuda", "1", "2", "3", "4", "5"]
+    todos_aportan_order = ["Si", "No"]
     tipo_order = ["Primera generacion", "No primera generacion"]
 
     edad_matrix, _ = _cluster_distribution_matrix(
@@ -465,6 +468,18 @@ def _detail_chart_table(
         category_order=deuda_order,
         unique_id_col="hogar_id",
     )
+    todos_aportan_matrix, _ = _cluster_distribution_matrix(
+        students_df,
+        _yes_no_series(
+            students_df.get(
+                "hogar_todos_con_ingreso",
+                pd.Series(0, index=students_df.index, dtype="float64"),
+            )
+        ),
+        cluster_order,
+        category_order=todos_aportan_order,
+        unique_id_col="hogar_id",
+    )
     estado_matrix, estado_order = _cluster_distribution_matrix(
         students_df,
         students_df["estado_hogar"],
@@ -493,6 +508,9 @@ def _detail_chart_table(
     table["Quintil ingresos"] = _as_row_lists(ingreso_matrix, ingreso_order)
     table["Promedio hijos"] = _as_row_lists(hijos_matrix, hijos_order)
     table["Hogares con deuda (Q deuda)"] = _as_row_lists(deuda_matrix, deuda_order)
+    table["Todos aportan en hogar"] = _as_row_lists(
+        todos_aportan_matrix, todos_aportan_order
+    )
     table["Estado del hogar"] = _as_row_lists(estado_matrix, estado_order)
     table["Tipo de estudiantes"] = _as_row_lists(tipo_matrix, tipo_order)
 
@@ -503,6 +521,7 @@ def _detail_chart_table(
         "Quintil ingresos": ingreso_order,
         "Promedio hijos": hijos_order,
         "Hogares con deuda (Q deuda)": deuda_order,
+        "Todos aportan en hogar": todos_aportan_order,
         "Estado del hogar": estado_order,
         "Tipo de estudiantes": tipo_order,
     }
@@ -551,6 +570,7 @@ def _detail_chart_table_html(
         "Quintil ingresos",
         "Promedio hijos",
         "Hogares con deuda (Q deuda)",
+        "Todos aportan en hogar",
         "Estado del hogar",
         "Tipo de estudiantes",
     ]
@@ -1125,6 +1145,9 @@ with tab_detalle:
             ),
             "Es de Quito (%)": st.column_config.NumberColumn(
                 "Es de Quito (%)", format="%.1f%%"
+            ),
+            "Hogares todos aportan en hogar (%)": st.column_config.NumberColumn(
+                "Hogares todos aportan en hogar (%)", format="%.1f%%"
             ),
             "Promedio hijos": st.column_config.NumberColumn(
                 "Promedio hijos", format="%d"
