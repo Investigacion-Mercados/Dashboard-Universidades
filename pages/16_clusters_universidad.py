@@ -27,6 +27,14 @@ from utils.udla_clusters import run_udla_cluster_analysis
 
 st.set_page_config(page_title="Clusters Universidad", page_icon="C", layout="wide")
 REGISTRATION_BASE_YEAR = 2025
+THREE_CLUSTER_UNIVERSITIES = {
+    "UNIVERSIDAD SAN FRANCISCO DE QUITO",
+    "UNIVERSIDAD INTERNACIONAL DEL ECUADOR",
+}
+
+
+def _university_key(value: str) -> str:
+    return " ".join(str(value).strip().upper().split())
 
 
 def _clean_series(series: pd.Series, default: str = "Sin dato") -> pd.Series:
@@ -382,7 +390,16 @@ def _run_all_university_clusters(
             ingreso_ranges,
             deuda_ranges,
         )
-        analysis = run_udla_cluster_analysis(cluster_input_df)
+        if _university_key(university_name) in THREE_CLUSTER_UNIVERSITIES:
+            analysis = run_udla_cluster_analysis(
+                cluster_input_df,
+                min_clusters=3,
+                max_clusters=3,
+                prefer_distinct_income_modal=True,
+                cluster_trials=24,
+            )
+        else:
+            analysis = run_udla_cluster_analysis(cluster_input_df)
         students_df = analysis["students"].copy()
         summary_df = analysis["summary"].copy()
 
