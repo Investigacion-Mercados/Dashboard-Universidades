@@ -243,6 +243,15 @@ def _build_universidades_base() -> pd.DataFrame:
     base["padres_presentes"] = (
         (base["CED_PADRE"] != "0").astype(int) + (base["CED_MADRE"] != "0").astype(int)
     )
+    tiene_padre = base["CED_PADRE"] != "0"
+    tiene_madre = base["CED_MADRE"] != "0"
+    padre_con_ingreso = base["salario_padre"] > 0
+    madre_con_ingreso = base["salario_madre"] > 0
+    base["hogar_todos_con_ingreso"] = (
+        (base["padres_presentes"] > 0)
+        & (~tiene_padre | padre_con_ingreso)
+        & (~tiene_madre | madre_con_ingreso)
+    ).astype(int)
     base["padres_con_superior"] = (
         (base["padre_NIVEL_CANON"] == "SUPERIOR").astype(int)
         + (base["madre_NIVEL_CANON"] == "SUPERIOR").astype(int)
@@ -266,6 +275,7 @@ def _build_universidades_base() -> pd.DataFrame:
             "deuda_hogar",
             "hijos_hogar",
             "primera_generacion",
+            "hogar_todos_con_ingreso",
             "estado_hogar",
         ]
     ].copy()
@@ -300,6 +310,12 @@ def _prepare_cluster_input(
 
     base["primera_generacion"] = (
         pd.to_numeric(base["primera_generacion"], errors="coerce")
+        .fillna(0)
+        .clip(lower=0, upper=1)
+        .astype(int)
+    )
+    base["hogar_todos_con_ingreso"] = (
+        pd.to_numeric(base.get("hogar_todos_con_ingreso", 0), errors="coerce")
         .fillna(0)
         .clip(lower=0, upper=1)
         .astype(int)
@@ -410,6 +426,7 @@ def _detail_cluster_table(df: pd.DataFrame) -> pd.DataFrame:
         "cluster",
         "universidad_referencia",
         "estudiantes",
+        "pct_hogares_todos_con_ingreso",
         "sexo_modal",
         "pct_edad_15_19",
         "pct_edad_20_22",
@@ -432,6 +449,7 @@ def _detail_cluster_table(df: pd.DataFrame) -> pd.DataFrame:
         "pct_edad_23_25": "23-25 anos",
         "pct_edad_mas_25": "Mas de 25 anos",
         "pct_quito": "Es de Quito (%)",
+        "pct_hogares_todos_con_ingreso": "Hogares todos con ingreso (%)",
         "quintil_ingreso_modal": "Quintil ingresos",
         "hijos_promedio_entero": "Promedio hijos",
         "hogares_con_deuda_q": "Hogares con deuda (Q deuda)",
@@ -464,6 +482,9 @@ def _student_cluster_detail_table(df: pd.DataFrame) -> pd.DataFrame:
     )
     out["estudiante_quito"] = _yes_no_series(out.get("estudiante_quito", 0))
     out["primera_generacion"] = _yes_no_series(out.get("primera_generacion", 0))
+    out["hogar_todos_con_ingreso"] = _yes_no_series(
+        out.get("hogar_todos_con_ingreso", 0)
+    )
     out["edad_estudiante"] = pd.to_numeric(
         out.get("edad_estudiante", np.nan), errors="coerce"
     )
@@ -493,6 +514,7 @@ def _student_cluster_detail_table(df: pd.DataFrame) -> pd.DataFrame:
         "edad_estudiante",
         "estudiante_quito",
         "primera_generacion",
+        "hogar_todos_con_ingreso",
         "quintil_ingreso_hogar",
         "quintil_deuda_hogar",
         "hijos_hogar_promedio",
@@ -510,6 +532,7 @@ def _student_cluster_detail_table(df: pd.DataFrame) -> pd.DataFrame:
         "edad_estudiante": "Edad",
         "estudiante_quito": "Quito",
         "primera_generacion": "Primera generacion",
+        "hogar_todos_con_ingreso": "Todos con ingreso",
         "quintil_ingreso_hogar": "Quintil ingreso",
         "quintil_deuda_hogar": "Quintil deuda",
         "hijos_hogar_promedio": "Hijos hogar prom.",
@@ -633,6 +656,7 @@ def _detail_chart_table(
     ingreso_order = ["Sin empleo", "1", "2", "3", "4", "5"]
     hijos_order = ["0", "1", "2", "3", "4", "5+"]
     deuda_order = ["Sin deuda", "1", "2", "3", "4", "5"]
+    todos_ingreso_order = ["Si", "No"]
     tipo_order = ["Primera generacion", "No primera generacion"]
 
     edad_matrix, _ = _cluster_distribution_matrix(
@@ -672,6 +696,18 @@ def _detail_chart_table(
         category_order=deuda_order,
         unique_id_col="hogar_id",
     )
+    todos_ingreso_matrix, _ = _cluster_distribution_matrix(
+        students_df,
+        _yes_no_series(
+            students_df.get(
+                "hogar_todos_con_ingreso",
+                pd.Series(0, index=students_df.index, dtype="float64"),
+            )
+        ),
+        cluster_order,
+        category_order=todos_ingreso_order,
+        unique_id_col="hogar_id",
+    )
     estado_matrix, estado_order = _cluster_distribution_matrix(
         students_df,
         students_df["estado_hogar"],
@@ -700,6 +736,9 @@ def _detail_chart_table(
     table["Quintil ingresos"] = _as_row_lists(ingreso_matrix, ingreso_order)
     table["Promedio hijos"] = _as_row_lists(hijos_matrix, hijos_order)
     table["Hogares con deuda (Q deuda)"] = _as_row_lists(deuda_matrix, deuda_order)
+    table["Todos con ingreso"] = _as_row_lists(
+        todos_ingreso_matrix, todos_ingreso_order
+    )
     table["Estado del hogar"] = _as_row_lists(estado_matrix, estado_order)
     table["Tipo de estudiantes"] = _as_row_lists(tipo_matrix, tipo_order)
 
@@ -710,6 +749,7 @@ def _detail_chart_table(
         "Quintil ingresos": ingreso_order,
         "Promedio hijos": hijos_order,
         "Hogares con deuda (Q deuda)": deuda_order,
+        "Todos con ingreso": todos_ingreso_order,
         "Estado del hogar": estado_order,
         "Tipo de estudiantes": tipo_order,
     }
@@ -758,6 +798,7 @@ def _detail_chart_table_html(
         "Quintil ingresos",
         "Promedio hijos",
         "Hogares con deuda (Q deuda)",
+        "Todos con ingreso",
         "Estado del hogar",
         "Tipo de estudiantes",
     ]
@@ -901,6 +942,10 @@ with tab_detalle:
             "Mas de 25 anos": st.column_config.NumberColumn("Mas de 25 anos", format="%.1f%%"),
             "Es de Quito (%)": st.column_config.NumberColumn(
                 "Es de Quito (%)",
+                format="%.1f%%",
+            ),
+            "Hogares todos con ingreso (%)": st.column_config.NumberColumn(
+                "Hogares todos con ingreso (%)",
                 format="%.1f%%",
             ),
             "Promedio hijos": st.column_config.NumberColumn("Promedio hijos", format="%d"),

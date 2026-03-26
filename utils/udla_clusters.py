@@ -15,6 +15,7 @@ CLUSTER_NUMERIC_COLUMNS = [
     "edad_estudiante",
     "estudiante_quito",
     "primera_generacion",
+    "hogar_todos_con_ingreso",
     "quintil_ingreso_num",
     "quintil_deuda_num",
     "hijos_hogar_promedio",
@@ -113,6 +114,15 @@ def _prepare_cluster_base(
         .clip(lower=0, upper=1)
         .astype(int)
     )
+    padres_presentes = pd.to_numeric(
+        base.get("padres_presentes", 0), errors="coerce"
+    ).fillna(0)
+    padres_con_empleo = pd.to_numeric(
+        base.get("padres_con_empleo", 0), errors="coerce"
+    ).fillna(0)
+    base["hogar_todos_con_ingreso"] = (
+        (padres_presentes > 0) & (padres_con_empleo >= padres_presentes)
+    ).astype(int)
     base["estudiante_quito"] = (
         base["IDENTIFICACION"].astype(str).str.strip().str.startswith("17").astype(int)
     )
@@ -561,6 +571,34 @@ def _cluster_summary(df: pd.DataFrame) -> pd.DataFrame:
         quintil_deuda_promedio=("quintil_deuda_num", "mean"),
         hijos_promedio=("hijos_hogar_promedio", "mean"),
     )
+
+    hogares_todos_con_ingreso = (
+        df[
+            [
+                "cluster_id",
+                "hogar_id",
+                "hogar_todos_con_ingreso",
+            ]
+        ]
+        .copy()
+        .assign(
+            hogar_todos_con_ingreso=lambda x: (
+                pd.to_numeric(x["hogar_todos_con_ingreso"], errors="coerce")
+                .fillna(0)
+                .clip(lower=0, upper=1)
+            )
+        )
+        .drop_duplicates(subset=["cluster_id", "hogar_id"], keep="first")
+        .groupby("cluster_id", as_index=False)["hogar_todos_con_ingreso"]
+        .mean()
+        .rename(
+            columns={"hogar_todos_con_ingreso": "pct_hogares_todos_con_ingreso"}
+        )
+    )
+    hogares_todos_con_ingreso["pct_hogares_todos_con_ingreso"] = (
+        hogares_todos_con_ingreso["pct_hogares_todos_con_ingreso"] * 100.0
+    )
+
     debt_counts = (
         df[pd.to_numeric(df["deuda_hogar"], errors="coerce").fillna(0) > 0]
         .groupby("cluster_id", as_index=False)["hogar_id"]
@@ -578,11 +616,17 @@ def _cluster_summary(df: pd.DataFrame) -> pd.DataFrame:
         quintil_deuda_modal=("quintil_deuda_hogar", _mode_or_default),
     )
 
-    summary = grouped.merge(debt_counts, on="cluster_id", how="left").merge(
-        modes, on="cluster_id", how="left"
+    summary = (
+        grouped.merge(hogares_todos_con_ingreso, on="cluster_id", how="left")
+        .merge(debt_counts, on="cluster_id", how="left")
+        .merge(modes, on="cluster_id", how="left")
     )
     summary["hogares_con_deuda"] = (
         pd.to_numeric(summary["hogares_con_deuda"], errors="coerce").fillna(0).astype(int)
+    )
+    summary["pct_hogares_todos_con_ingreso"] = (
+        pd.to_numeric(summary["pct_hogares_todos_con_ingreso"], errors="coerce")
+        .fillna(0.0)
     )
     summary["tipo_estudiantes_pg"] = np.where(
         summary["pct_primera_generacion"] >= 50.0,
@@ -604,6 +648,7 @@ def _cluster_summary(df: pd.DataFrame) -> pd.DataFrame:
         "pct_mujeres",
         "pct_quito",
         "pct_primera_generacion",
+        "pct_hogares_todos_con_ingreso",
         "quintil_ingreso_promedio",
         "quintil_deuda_promedio",
         "hijos_promedio",
