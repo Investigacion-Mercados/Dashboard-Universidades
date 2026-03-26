@@ -659,6 +659,47 @@ def _detail_chart_table_html(
 """
 
 
+def _format_distribution_values(
+    raw_values: object, categories: list[str]
+) -> str:
+    if not isinstance(raw_values, list):
+        return "Sin dato"
+
+    pairs: list[str] = []
+    for category, value in zip(categories, raw_values):
+        value_num = float(pd.to_numeric(value, errors="coerce"))
+        if pd.isna(value_num):
+            continue
+        pairs.append(f"{category}: {value_num:.1f}%")
+    return " | ".join(pairs) if pairs else "Sin dato"
+
+
+def _detail_chart_values_table(
+    detail_chart_df: pd.DataFrame, legend_map: dict[str, list[str]]
+) -> pd.DataFrame:
+    if detail_chart_df.empty:
+        return detail_chart_df
+
+    out = detail_chart_df.copy()
+    chart_cols = [
+        "Genero estudiante",
+        "Edad",
+        "Es de Quito (%)",
+        "Quintil ingresos",
+        "Promedio hijos",
+        "Hogares con deuda (Q deuda)",
+        "Todos aportan en hogar",
+        "Estado del hogar",
+        "Tipo de estudiantes",
+    ]
+    for column in chart_cols:
+        categories = legend_map.get(column, [])
+        out[column] = out[column].apply(
+            lambda values: _format_distribution_values(values, categories)
+        )
+    return out
+
+
 def _overview_table(
     cluster_tables: dict[str, pd.DataFrame], cluster_order: list[str]
 ) -> pd.DataFrame:
@@ -961,17 +1002,17 @@ metric_4.metric(
 )
 income_mode_unique = int(_clean_series(summary_df.get("quintil_ingreso_modal", pd.Series(dtype="object"))).nunique())
 st.caption(
-    f"k automatico sugerido con los filtros actuales: {baseline_k}. "
-    f"k aplicado en esta pagina: {cluster_count} (objetivo: {FORCED_CLUSTERS_UDLA})."
+    f"k sugerido con los filtros actuales: {baseline_k}. "
+    f"k obtenido en esta ejecucion: {cluster_count}."
 )
 if cluster_count == FORCED_CLUSTERS_UDLA:
     if income_mode_unique >= FORCED_CLUSTERS_UDLA:
         st.success(
-            f"Validacion ingreso: los {FORCED_CLUSTERS_UDLA} clusters quedaron con quintil ingreso modal distinto."
+            "Validacion ingreso: los clusters quedaron con quintil ingreso modal distinto."
         )
     else:
         st.warning(
-            "Validacion ingreso: no fue posible obtener 3 quintiles modales distintos "
+            "Validacion ingreso: no fue posible obtener quintiles modales distintos "
             "con estos filtros sin romper consistencia de tamanos y cohesion."
         )
 if not summary_df.empty:
@@ -985,7 +1026,7 @@ if not summary_df.empty:
         st.warning(
             "Revision: uno de los clusters queda por debajo de 10% del universo filtrado."
         )
-    with st.expander("Revision de balance de clusters (k=3)", expanded=False):
+    with st.expander("Revision de balance de clusters", expanded=False):
         st.dataframe(
             balance_df.rename(
                 columns={"cluster": "Cluster", "estudiantes": "Estudiantes"}
@@ -1174,6 +1215,27 @@ with tab_detalle_graficos:
             _detail_chart_table_html(detail_chart_df, legend_map),
             unsafe_allow_html=True,
         )
+        st.markdown("##### Valores (%)")
+        detail_values_df = _detail_chart_values_table(detail_chart_df, legend_map)
+        st.dataframe(
+            detail_values_df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Cantidad estudiantes": st.column_config.NumberColumn(
+                    "Cantidad estudiantes", format="%d"
+                ),
+            },
+        )
+        st.download_button(
+            label="Descargar valores detalle graficos (.xlsx)",
+            data=_to_excel_bytes(
+                detail_values_df, sheet_name="Detalle Graficos Valores"
+            ),
+            file_name="detalle_graficos_clusters_udla.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="clusters_udla_detalle_graficos_valores_xlsx",
+        )
 
 with tab_universidades:
     st.caption(
@@ -1326,9 +1388,8 @@ with tab_metodo:
     st.dataframe(methodology, use_container_width=True, hide_index=True)
 
     st.markdown(
-        "En esta pagina el numero de clusters se fija en 3 para mantener "
-        "comparabilidad entre filtros. Se muestra una revision de balance de tamanos "
-        "para validar que la segmentacion no genere grupos residuales."
+        "Se muestra una revision de balance de tamanos para validar que la segmentacion "
+        "no genere grupos residuales."
     )
     st.markdown(
         "En la pestaña `Cluster Universidades`, los clusters se entrenan con UDLA y "

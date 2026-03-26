@@ -647,25 +647,89 @@ def _cluster_distribution_matrix(
 
 
 def _detail_chart_table(
-    students_df: pd.DataFrame, summary_df: pd.DataFrame
+    students_df: pd.DataFrame,
+    summary_df: pd.DataFrame,
+    *,
+    include_university_reference: bool = False,
 ) -> tuple[pd.DataFrame, dict[str, list[str]]]:
     if students_df.empty or summary_df.empty:
         return pd.DataFrame(), {}
 
-    cluster_order = summary_df["cluster"].dropna().astype(str).tolist()
-    summary_counts = (
-        summary_df.set_index("cluster")["estudiantes"]
-        .reindex(cluster_order)
-        .fillna(0)
-        .astype(int)
-    )
+    if include_university_reference:
+        summary_work = summary_df.copy()
+        summary_work["universidad_referencia"] = _clean_series(
+            summary_work.get(
+                "universidad_referencia",
+                pd.Series(index=summary_work.index, dtype="object"),
+            )
+        )
+        summary_work["cluster"] = _clean_series(summary_work["cluster"])
+        summary_work["cluster_orden"] = (
+            pd.to_numeric(
+                summary_work["cluster"].astype(str).str.extract(r"(\d+)")[0],
+                errors="coerce",
+            )
+            .fillna(999)
+            .astype(int)
+        )
+        summary_work = summary_work.sort_values(
+            ["universidad_referencia", "cluster_orden", "cluster"]
+        ).reset_index(drop=True)
+        summary_work["cluster_key"] = (
+            summary_work["universidad_referencia"] + " || " + summary_work["cluster"]
+        )
+        cluster_order = summary_work["cluster_key"].tolist()
 
-    table = pd.DataFrame(
-        {
-            "Cluster": cluster_order,
-            "Cantidad estudiantes": summary_counts.values,
-        }
-    )
+        summary_counts = (
+            summary_work.set_index("cluster_key")["estudiantes"]
+            .reindex(cluster_order)
+            .fillna(0)
+            .astype(int)
+        )
+        cluster_labels = (
+            summary_work.set_index("cluster_key")["cluster"]
+            .reindex(cluster_order)
+            .astype(str)
+        )
+        university_labels = (
+            summary_work.set_index("cluster_key")["universidad_referencia"]
+            .reindex(cluster_order)
+            .astype(str)
+        )
+        table = pd.DataFrame(
+            {
+                "Universidad referencia": university_labels.values,
+                "Cluster": cluster_labels.values,
+                "Cantidad estudiantes": summary_counts.values,
+            }
+        )
+
+        students_work = students_df.copy()
+        students_work["cluster"] = (
+            _clean_series(
+                students_work.get(
+                    "Universidad",
+                    pd.Series(index=students_work.index, dtype="object"),
+                )
+            )
+            + " || "
+            + _clean_series(students_work["cluster"])
+        )
+    else:
+        cluster_order = summary_df["cluster"].dropna().astype(str).tolist()
+        summary_counts = (
+            summary_df.set_index("cluster")["estudiantes"]
+            .reindex(cluster_order)
+            .fillna(0)
+            .astype(int)
+        )
+        table = pd.DataFrame(
+            {
+                "Cluster": cluster_order,
+                "Cantidad estudiantes": summary_counts.values,
+            }
+        )
+        students_work = students_df.copy()
 
     age_order = ["15-19 anos", "20-22 anos", "23-25 anos", "Mas de 25 anos", "Sin dato"]
     genero_order = ["MUJER", "HOMBRE", "DESCONOCIDO"]
@@ -677,48 +741,48 @@ def _detail_chart_table(
     tipo_order = ["Primera generacion", "No primera generacion"]
 
     edad_matrix, _ = _cluster_distribution_matrix(
-        students_df,
-        _age_bucket(students_df["edad_estudiante"]),
+        students_work,
+        _age_bucket(students_work["edad_estudiante"]),
         cluster_order,
         category_order=age_order,
     )
     genero_matrix, _ = _cluster_distribution_matrix(
-        students_df,
-        students_df["sexo_estudiante"],
+        students_work,
+        students_work["sexo_estudiante"],
         cluster_order,
         category_order=genero_order,
     )
     quito_matrix, _ = _cluster_distribution_matrix(
-        students_df,
-        _yes_no_series(students_df["estudiante_quito"]),
+        students_work,
+        _yes_no_series(students_work["estudiante_quito"]),
         cluster_order,
         category_order=quito_order,
     )
     ingreso_matrix, _ = _cluster_distribution_matrix(
-        students_df,
-        students_df["quintil_ingreso_hogar"],
+        students_work,
+        students_work["quintil_ingreso_hogar"],
         cluster_order,
         category_order=ingreso_order,
     )
     hijos_matrix, _ = _cluster_distribution_matrix(
-        students_df,
-        _hijos_bucket(students_df["hijos_hogar_promedio"]),
+        students_work,
+        _hijos_bucket(students_work["hijos_hogar_promedio"]),
         cluster_order,
         category_order=hijos_order,
     )
     deuda_matrix, _ = _cluster_distribution_matrix(
-        students_df,
-        students_df["quintil_deuda_hogar"],
+        students_work,
+        students_work["quintil_deuda_hogar"],
         cluster_order,
         category_order=deuda_order,
         unique_id_col="hogar_id",
     )
     todos_ingreso_matrix, _ = _cluster_distribution_matrix(
-        students_df,
+        students_work,
         _yes_no_series(
-            students_df.get(
+            students_work.get(
                 "hogar_todos_con_ingreso",
-                pd.Series(0, index=students_df.index, dtype="float64"),
+                pd.Series(0, index=students_work.index, dtype="float64"),
             )
         ),
         cluster_order,
@@ -726,14 +790,14 @@ def _detail_chart_table(
         unique_id_col="hogar_id",
     )
     estado_matrix, estado_order = _cluster_distribution_matrix(
-        students_df,
-        students_df["estado_hogar"],
+        students_work,
+        students_work["estado_hogar"],
         cluster_order,
         category_order=None,
     )
     tipo_matrix, _ = _cluster_distribution_matrix(
-        students_df,
-        _yes_no_series(students_df["primera_generacion"]).replace(
+        students_work,
+        _yes_no_series(students_work["primera_generacion"]).replace(
             {"Si": "Primera generacion", "No": "No primera generacion"}
         ),
         cluster_order,
@@ -819,7 +883,11 @@ def _detail_chart_table_html(
         "Estado del hogar",
         "Tipo de estudiantes",
     ]
-    base_cols = ["Cluster", "Cantidad estudiantes"]
+    base_cols = (
+        ["Universidad referencia", "Cluster", "Cantidad estudiantes"]
+        if "Universidad referencia" in detail_chart_df.columns
+        else ["Cluster", "Cantidad estudiantes"]
+    )
     columns = [*base_cols, *chart_cols]
 
     palette = [
@@ -838,10 +906,17 @@ def _detail_chart_table_html(
 
     for _, row in detail_chart_df.iterrows():
         cells: list[str] = []
-        cells.append(f"<td>{html.escape(str(row['Cluster']))}</td>")
-        cells.append(
-            f"<td>{int(pd.to_numeric(row['Cantidad estudiantes'], errors='coerce') or 0):,}</td>"
-        )
+        for column in base_cols:
+            if column == "Cantidad estudiantes":
+                cells.append(
+                    (
+                        '<td class="detalle-num">'
+                        f"{int(pd.to_numeric(row[column], errors='coerce') or 0):,}"
+                        "</td>"
+                    )
+                )
+            else:
+                cells.append(f"<td>{html.escape(str(row[column]))}</td>")
 
         for col in chart_cols:
             categories = legend_map.get(col, [])
@@ -876,7 +951,7 @@ def _detail_chart_table_html(
   font-weight: 600;
   background: rgba(15, 23, 42, 0.2);
 }}
-.detalle-table td:nth-child(2) {{
+.detalle-num {{
   text-align: right;
 }}
 .detalle-bar {{
@@ -904,6 +979,47 @@ def _detail_chart_table_html(
   </table>
 </div>
 """
+
+
+def _format_distribution_values(
+    raw_values: object, categories: list[str]
+) -> str:
+    if not isinstance(raw_values, list):
+        return "Sin dato"
+
+    pairs: list[str] = []
+    for category, value in zip(categories, raw_values):
+        value_num = float(pd.to_numeric(value, errors="coerce"))
+        if pd.isna(value_num):
+            continue
+        pairs.append(f"{category}: {value_num:.1f}%")
+    return " | ".join(pairs) if pairs else "Sin dato"
+
+
+def _detail_chart_values_table(
+    detail_chart_df: pd.DataFrame, legend_map: dict[str, list[str]]
+) -> pd.DataFrame:
+    if detail_chart_df.empty:
+        return detail_chart_df
+
+    out = detail_chart_df.copy()
+    chart_cols = [
+        "Genero estudiante",
+        "Edad",
+        "Es de Quito (%)",
+        "Quintil ingresos",
+        "Promedio hijos",
+        "Hogares con deuda (Q deuda)",
+        "Todos con ingreso",
+        "Estado del hogar",
+        "Tipo de estudiantes",
+    ]
+    for column in chart_cols:
+        categories = legend_map.get(column, [])
+        out[column] = out[column].apply(
+            lambda values: _format_distribution_values(values, categories)
+        )
+    return out
 
 
 def _to_excel_bytes(df: pd.DataFrame, sheet_name: str = "Detalle") -> bytes:
@@ -1077,22 +1193,29 @@ with tab_detalle_graficos:
     else:
         selected_university = st.selectbox(
             "Universidad",
-            options=university_options,
+            options=["Todas"] + university_options,
             index=0,
             key="clusters_universidades_detalle_universidad",
         )
-        students_view_df = students_df[
-            _clean_series(students_df["Universidad"]) == selected_university
-        ].copy()
-        summary_view_df = summary_df[
-            _clean_series(summary_df["universidad_referencia"]) == selected_university
-        ].copy()
+        show_all_universities = selected_university == "Todas"
+        if show_all_universities:
+            students_view_df = students_df.copy()
+            summary_view_df = summary_df.copy()
+        else:
+            students_view_df = students_df[
+                _clean_series(students_df["Universidad"]) == selected_university
+            ].copy()
+            summary_view_df = summary_df[
+                _clean_series(summary_df["universidad_referencia"]) == selected_university
+            ].copy()
 
         st.caption(
             "Tabla de detalle con mini-graficos de distribucion (%) por cluster."
         )
         detail_chart_df, legend_map = _detail_chart_table(
-            students_view_df, summary_view_df
+            students_view_df,
+            summary_view_df,
+            include_university_reference=show_all_universities,
         )
         if detail_chart_df.empty:
             st.info("No hay datos suficientes para construir detalle con graficos.")
@@ -1100,4 +1223,35 @@ with tab_detalle_graficos:
             st.markdown(
                 _detail_chart_table_html(detail_chart_df, legend_map),
                 unsafe_allow_html=True,
+            )
+            st.markdown("##### Valores (%)")
+            detail_values_df = _detail_chart_values_table(detail_chart_df, legend_map)
+            st.dataframe(
+                detail_values_df,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Cantidad estudiantes": st.column_config.NumberColumn(
+                        "Cantidad estudiantes", format="%d"
+                    ),
+                },
+            )
+            if show_all_universities:
+                file_name = "detalle_graficos_todas_universidades.xlsx"
+            else:
+                university_suffix = "".join(
+                    char if char.isalnum() else "_"
+                    for char in selected_university.lower()
+                ).strip("_")
+                if not university_suffix:
+                    university_suffix = "universidad"
+                file_name = f"detalle_graficos_{university_suffix}.xlsx"
+            st.download_button(
+                label="Descargar valores detalle graficos (.xlsx)",
+                data=_to_excel_bytes(
+                    detail_values_df, sheet_name="Detalle Graficos Valores"
+                ),
+                file_name=file_name,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="clusters_universidades_detalle_graficos_valores_xlsx",
             )
