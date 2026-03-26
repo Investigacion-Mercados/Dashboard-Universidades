@@ -732,6 +732,75 @@ def _udla_reference_table(summary_df: pd.DataFrame) -> pd.DataFrame:
     return summary_df[columns].rename(columns=rename_map)
 
 
+def _projected_students_detail_table(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+
+    out = df.copy()
+    out["estudiante_quito"] = (
+        pd.to_numeric(out.get("estudiante_quito"), errors="coerce")
+        .fillna(0)
+        .astype(int)
+        .map({1: "Si", 0: "No"})
+        .fillna("No")
+    )
+    out["primera_generacion"] = (
+        pd.to_numeric(out.get("primera_generacion"), errors="coerce")
+        .fillna(0)
+        .astype(int)
+        .map({1: "Si", 0: "No"})
+        .fillna("No")
+    )
+    out["cluster_udla"] = _clean_series(out.get("cluster_udla", "Sin dato"))
+    out["Universidad"] = _clean_series(out.get("Universidad", "Sin dato"))
+    out["distancia_cluster_udla"] = pd.to_numeric(
+        out.get("distancia_cluster_udla"), errors="coerce"
+    ).fillna(0.0)
+
+    columns = [
+        "cluster_udla",
+        "Universidad",
+        "IDENTIFICACION",
+        "hogar_id",
+        "sexo_estudiante",
+        "edad_estudiante",
+        "quintil_ingreso_hogar",
+        "quintil_deuda_hogar",
+        "tipo_estudiante",
+        "estado_hogar",
+        "estudiante_quito",
+        "primera_generacion",
+        "hijos_hogar_promedio",
+        "facultad",
+        "carrera",
+        "distancia_cluster_udla",
+    ]
+    rename_map = {
+        "cluster_udla": "Cluster UDLA",
+        "Universidad": "Universidad",
+        "IDENTIFICACION": "Identificacion",
+        "hogar_id": "Hogar",
+        "sexo_estudiante": "Genero",
+        "edad_estudiante": "Edad",
+        "quintil_ingreso_hogar": "Quintil ingreso",
+        "quintil_deuda_hogar": "Quintil deuda",
+        "tipo_estudiante": "Tipo estudiante",
+        "estado_hogar": "Estado del hogar",
+        "estudiante_quito": "Es de Quito",
+        "primera_generacion": "Primera generacion",
+        "hijos_hogar_promedio": "Promedio hijos hogar",
+        "facultad": "Facultad",
+        "carrera": "Carrera",
+        "distancia_cluster_udla": "Distancia a cluster",
+    }
+    available = [col for col in columns if col in out.columns]
+    out = out[available].rename(columns=rename_map)
+    sort_cols = [col for col in ["Cluster UDLA", "Universidad", "Identificacion"] if col in out.columns]
+    if sort_cols:
+        out = out.sort_values(sort_cols).reset_index(drop=True)
+    return out
+
+
 def _distribution_chart(
     df: pd.DataFrame,
     column: str,
@@ -1137,6 +1206,61 @@ with tab_universidades:
                 use_container_width=True,
                 hide_index=True,
                 column_config=pivot_config,
+            )
+
+        st.markdown("#### Detalle personas por cluster")
+        people_detail_df = _projected_students_detail_table(projected_students_df)
+        if people_detail_df.empty:
+            st.info("No hay datos de personas para mostrar en detalle.")
+        else:
+            available_clusters = set(people_detail_df["Cluster UDLA"].tolist())
+            cluster_options = ["Todos"] + [
+                cluster_name
+                for cluster_name in university_cluster_order
+                if cluster_name in available_clusters
+            ]
+            selected_cluster_people = st.selectbox(
+                "Cluster",
+                options=cluster_options,
+                index=0,
+                key="clusters_udla_universidades_personas_cluster",
+            )
+            people_view_df = (
+                people_detail_df.copy()
+                if selected_cluster_people == "Todos"
+                else people_detail_df[
+                    people_detail_df["Cluster UDLA"] == selected_cluster_people
+                ].copy()
+            )
+
+            st.dataframe(
+                people_view_df,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Edad": st.column_config.NumberColumn("Edad", format="%.0f"),
+                    "Promedio hijos hogar": st.column_config.NumberColumn(
+                        "Promedio hijos hogar", format="%.1f"
+                    ),
+                    "Distancia a cluster": st.column_config.NumberColumn(
+                        "Distancia a cluster", format="%.3f"
+                    ),
+                },
+            )
+
+            cluster_suffix = (
+                "todos"
+                if selected_cluster_people == "Todos"
+                else selected_cluster_people.replace(" ", "_").lower()
+            )
+            st.download_button(
+                label="Descargar personas en Excel (.xlsx)",
+                data=_to_excel_bytes(
+                    people_view_df, sheet_name="Personas Cluster Univ"
+                ),
+                file_name=f"cluster_universidades_personas_{cluster_suffix}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="clusters_udla_universidades_personas_xlsx",
             )
 
         with st.expander("Ver referencia de clusters UDLA", expanded=False):
