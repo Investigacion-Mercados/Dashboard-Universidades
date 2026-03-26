@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import io
 import math
 
@@ -25,6 +26,7 @@ INGRESO_TICKS = [0, 1, 2, 3, 4, 5]
 INGRESO_LABELS = ["Sin empleo", "Q1", "Q2", "Q3", "Q4", "Q5"]
 DEUDA_TICKS = [0, 1, 2, 3, 4, 5]
 DEUDA_LABELS = ["Sin deuda", "Q1", "Q2", "Q3", "Q4", "Q5"]
+FORCED_CLUSTERS_UDLA = 3
 
 
 def _clean_series(series: pd.Series, default: str = "Sin dato") -> pd.Series:
@@ -331,6 +333,312 @@ def _stacked_bar_chart(
     return fig
 
 
+def _cluster_distribution_matrix(
+    df: pd.DataFrame,
+    category_series: pd.Series,
+    cluster_order: list[str],
+    *,
+    category_order: list[str] | None = None,
+    unique_id_col: str | None = None,
+) -> tuple[pd.DataFrame, list[str]]:
+    if df.empty:
+        empty = pd.DataFrame(index=cluster_order)
+        return empty, (category_order or [])
+
+    chart_df = pd.DataFrame(
+        {
+            "cluster": _clean_series(df["cluster"]),
+            "categoria": _clean_series(category_series),
+        }
+    )
+
+    if unique_id_col is not None and unique_id_col in df.columns:
+        chart_df["id_unico"] = _clean_series(df[unique_id_col], default="0")
+        grouped = (
+            chart_df.groupby(["cluster", "categoria"], as_index=False)["id_unico"]
+            .nunique()
+            .rename(columns={"id_unico": "conteo"})
+        )
+        totals = (
+            chart_df.groupby("cluster", as_index=False)["id_unico"]
+            .nunique()
+            .rename(columns={"id_unico": "total"})
+        )
+    else:
+        grouped = (
+            chart_df.groupby(["cluster", "categoria"], as_index=False)
+            .size()
+            .rename(columns={"size": "conteo"})
+        )
+        totals = (
+            chart_df.groupby("cluster", as_index=False)
+            .size()
+            .rename(columns={"size": "total"})
+        )
+
+    grouped = grouped.merge(totals, on="cluster", how="left")
+    grouped["valor"] = grouped["conteo"] / grouped["total"] * 100.0
+
+    if category_order is None:
+        category_order = (
+            grouped.groupby("categoria", as_index=False)["conteo"]
+            .sum()
+            .sort_values("conteo", ascending=False)["categoria"]
+            .tolist()
+        )
+
+    matrix = grouped.pivot_table(
+        index="cluster",
+        columns="categoria",
+        values="valor",
+        aggfunc="sum",
+        fill_value=0.0,
+    )
+    matrix = matrix.reindex(index=cluster_order, fill_value=0.0)
+    matrix = matrix.reindex(columns=category_order, fill_value=0.0)
+    return matrix, category_order
+
+
+def _detail_chart_table(
+    students_df: pd.DataFrame, summary_df: pd.DataFrame
+) -> tuple[pd.DataFrame, dict[str, list[str]]]:
+    if students_df.empty or summary_df.empty:
+        return pd.DataFrame(), {}
+
+    cluster_order = summary_df["cluster"].dropna().astype(str).tolist()
+    summary_counts = (
+        summary_df.set_index("cluster")["estudiantes"]
+        .reindex(cluster_order)
+        .fillna(0)
+        .astype(int)
+    )
+
+    table = pd.DataFrame(
+        {
+            "Cluster": cluster_order,
+            "Cantidad estudiantes": summary_counts.values,
+        }
+    )
+
+    age_order = ["15-19 anos", "20-22 anos", "23-25 anos", "Mas de 25 anos", "Sin dato"]
+    genero_order = ["MUJER", "HOMBRE", "DESCONOCIDO"]
+    quito_order = ["Si", "No"]
+    ingreso_order = ["Sin empleo", "1", "2", "3", "4", "5"]
+    hijos_order = ["0", "1", "2", "3", "4", "5+"]
+    deuda_order = ["Sin deuda", "1", "2", "3", "4", "5"]
+    tipo_order = ["Primera generacion", "No primera generacion"]
+
+    edad_matrix, _ = _cluster_distribution_matrix(
+        students_df,
+        _age_bucket(students_df["edad_estudiante"]),
+        cluster_order,
+        category_order=age_order,
+    )
+    genero_matrix, _ = _cluster_distribution_matrix(
+        students_df,
+        students_df["sexo_estudiante"],
+        cluster_order,
+        category_order=genero_order,
+    )
+    quito_matrix, _ = _cluster_distribution_matrix(
+        students_df,
+        _yes_no_series(students_df["estudiante_quito"]),
+        cluster_order,
+        category_order=quito_order,
+    )
+    ingreso_matrix, _ = _cluster_distribution_matrix(
+        students_df,
+        students_df["quintil_ingreso_hogar"],
+        cluster_order,
+        category_order=ingreso_order,
+    )
+    hijos_matrix, _ = _cluster_distribution_matrix(
+        students_df,
+        _hijos_bucket(students_df["hijos_hogar_promedio"]),
+        cluster_order,
+        category_order=hijos_order,
+    )
+    deuda_matrix, _ = _cluster_distribution_matrix(
+        students_df,
+        students_df["quintil_deuda_hogar"],
+        cluster_order,
+        category_order=deuda_order,
+        unique_id_col="hogar_id",
+    )
+    estado_matrix, estado_order = _cluster_distribution_matrix(
+        students_df,
+        students_df["estado_hogar"],
+        cluster_order,
+        category_order=None,
+    )
+    tipo_matrix, _ = _cluster_distribution_matrix(
+        students_df,
+        _yes_no_series(students_df["primera_generacion"]).replace(
+            {"Si": "Primera generacion", "No": "No primera generacion"}
+        ),
+        cluster_order,
+        category_order=tipo_order,
+    )
+
+    if not estado_order:
+        estado_order = ["Sin dato"]
+
+    def _as_row_lists(matrix: pd.DataFrame, order: list[str]) -> list[list[float]]:
+        aligned = matrix.reindex(index=cluster_order, columns=order, fill_value=0.0)
+        return aligned.astype(float).values.tolist()
+
+    table["Genero estudiante"] = _as_row_lists(genero_matrix, genero_order)
+    table["Edad"] = _as_row_lists(edad_matrix, age_order)
+    table["Es de Quito (%)"] = _as_row_lists(quito_matrix, quito_order)
+    table["Quintil ingresos"] = _as_row_lists(ingreso_matrix, ingreso_order)
+    table["Promedio hijos"] = _as_row_lists(hijos_matrix, hijos_order)
+    table["Hogares con deuda (Q deuda)"] = _as_row_lists(deuda_matrix, deuda_order)
+    table["Estado del hogar"] = _as_row_lists(estado_matrix, estado_order)
+    table["Tipo de estudiantes"] = _as_row_lists(tipo_matrix, tipo_order)
+
+    legend_map = {
+        "Genero estudiante": genero_order,
+        "Edad": age_order,
+        "Es de Quito (%)": quito_order,
+        "Quintil ingresos": ingreso_order,
+        "Promedio hijos": hijos_order,
+        "Hogares con deuda (Q deuda)": deuda_order,
+        "Estado del hogar": estado_order,
+        "Tipo de estudiantes": tipo_order,
+    }
+    return table, legend_map
+
+
+def _stacked_cell_html(
+    values: list[float],
+    categories: list[str],
+    colors: list[str],
+) -> str:
+    clean_values = [max(float(v), 0.0) for v in values]
+    total = float(sum(clean_values))
+    if total <= 0:
+        return '<div class="detalle-bar-empty">Sin dato</div>'
+
+    segments: list[str] = []
+    for idx, (cat, value) in enumerate(zip(categories, clean_values)):
+        if value <= 0:
+            continue
+        width = value / total * 100.0
+        color = colors[idx % len(colors)]
+        tooltip = html.escape(f"{cat}: {value:.1f}%")
+        segments.append(
+            (
+                f'<span class="detalle-seg" style="width:{width:.4f}%;background:{color};" '
+                f'title="{tooltip}"></span>'
+            )
+        )
+
+    if not segments:
+        return '<div class="detalle-bar-empty">Sin dato</div>'
+    return f'<div class="detalle-bar">{"".join(segments)}</div>'
+
+
+def _detail_chart_table_html(
+    detail_chart_df: pd.DataFrame, legend_map: dict[str, list[str]]
+) -> str:
+    if detail_chart_df.empty:
+        return "<p>Sin datos.</p>"
+
+    chart_cols = [
+        "Genero estudiante",
+        "Edad",
+        "Es de Quito (%)",
+        "Quintil ingresos",
+        "Promedio hijos",
+        "Hogares con deuda (Q deuda)",
+        "Estado del hogar",
+        "Tipo de estudiantes",
+    ]
+    base_cols = ["Cluster", "Cantidad estudiantes"]
+    columns = [*base_cols, *chart_cols]
+
+    palette = [
+        "#E8D677",
+        "#E3B56F",
+        "#DE926C",
+        "#D96A6A",
+        "#A78BFA",
+        "#60A5FA",
+        "#34D399",
+        "#FBBF24",
+    ]
+
+    header_html = "".join(f"<th>{html.escape(col)}</th>" for col in columns)
+    rows_html: list[str] = []
+
+    for _, row in detail_chart_df.iterrows():
+        cells: list[str] = []
+        cells.append(f"<td>{html.escape(str(row['Cluster']))}</td>")
+        cells.append(f"<td>{int(pd.to_numeric(row['Cantidad estudiantes'], errors='coerce') or 0):,}</td>")
+
+        for col in chart_cols:
+            categories = legend_map.get(col, [])
+            raw_values = row[col]
+            if isinstance(raw_values, list):
+                values = [float(v) for v in raw_values]
+            else:
+                values = []
+            bar_html = _stacked_cell_html(values, categories, palette)
+            cells.append(f"<td>{bar_html}</td>")
+
+        rows_html.append(f"<tr>{''.join(cells)}</tr>")
+
+    return f"""
+<style>
+.detalle-wrap {{
+  width: 100%;
+  overflow-x: auto;
+}}
+.detalle-table {{
+  border-collapse: collapse;
+  width: 100%;
+  min-width: 1300px;
+}}
+.detalle-table th, .detalle-table td {{
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  padding: 8px 10px;
+  text-align: left;
+  vertical-align: middle;
+}}
+.detalle-table th {{
+  font-weight: 600;
+  background: rgba(15, 23, 42, 0.2);
+}}
+.detalle-table td:nth-child(2) {{
+  text-align: right;
+}}
+.detalle-bar {{
+  height: 18px;
+  width: 100%;
+  min-width: 170px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: rgba(148, 163, 184, 0.18);
+  display: flex;
+}}
+.detalle-seg {{
+  height: 100%;
+  display: inline-block;
+}}
+.detalle-bar-empty {{
+  color: #94a3b8;
+  font-size: 12px;
+}}
+</style>
+<div class="detalle-wrap">
+  <table class="detalle-table">
+    <thead><tr>{header_html}</tr></thead>
+    <tbody>{''.join(rows_html)}</tbody>
+  </table>
+</div>
+"""
+
+
 def _overview_table(
     cluster_tables: dict[str, pd.DataFrame], cluster_order: list[str]
 ) -> pd.DataFrame:
@@ -519,18 +827,31 @@ if filtered_df.empty:
     st.stop()
 
 with st.spinner("Calculando clusters de estudiantes UDLA..."):
-    analysis = run_udla_cluster_analysis(filtered_df)
+    baseline_analysis = run_udla_cluster_analysis(filtered_df)
+    analysis = run_udla_cluster_analysis(
+        filtered_df,
+        min_clusters=FORCED_CLUSTERS_UDLA,
+        max_clusters=FORCED_CLUSTERS_UDLA,
+        prefer_distinct_income_modal=True,
+        cluster_trials=24,
+    )
     external_universities_df = all_students_df[
         all_students_df["fuente_archivo"] == "Universidades"
     ].copy()
     university_analysis = run_university_cluster_projection(
-        filtered_df, external_universities_df
+        filtered_df,
+        external_universities_df,
+        min_clusters=FORCED_CLUSTERS_UDLA,
+        max_clusters=FORCED_CLUSTERS_UDLA,
+        prefer_distinct_income_modal=True,
+        cluster_trials=24,
     )
 
 students_df = analysis["students"].copy()
 summary_df = analysis["summary"].copy()
 profile_df = analysis["profile"].copy()
 cluster_count = int(analysis.get("k", 0))
+baseline_k = int(baseline_analysis.get("k", 0))
 university_cluster_tables = university_analysis.get("cluster_tables", {})
 university_cluster_order = university_analysis.get("cluster_order", [])
 projected_students_df = university_analysis.get("students", pd.DataFrame()).copy()
@@ -549,6 +870,46 @@ metric_4.metric(
     "% Quito",
     f"{float(students_df['estudiante_quito'].mean() * 100.0):.1f}%",
 )
+income_mode_unique = int(_clean_series(summary_df.get("quintil_ingreso_modal", pd.Series(dtype="object"))).nunique())
+st.caption(
+    f"k automatico sugerido con los filtros actuales: {baseline_k}. "
+    f"k aplicado en esta pagina: {cluster_count} (objetivo: {FORCED_CLUSTERS_UDLA})."
+)
+if cluster_count == FORCED_CLUSTERS_UDLA:
+    if income_mode_unique >= FORCED_CLUSTERS_UDLA:
+        st.success(
+            f"Validacion ingreso: los {FORCED_CLUSTERS_UDLA} clusters quedaron con quintil ingreso modal distinto."
+        )
+    else:
+        st.warning(
+            "Validacion ingreso: no fue posible obtener 3 quintiles modales distintos "
+            "con estos filtros sin romper consistencia de tamanos y cohesion."
+        )
+if not summary_df.empty:
+    balance_df = summary_df[["cluster", "estudiantes"]].copy()
+    total_students_balance = max(int(balance_df["estudiantes"].sum()), 1)
+    balance_df["Participacion (%)"] = (
+        balance_df["estudiantes"] / total_students_balance * 100.0
+    )
+    min_share = float(balance_df["Participacion (%)"].min())
+    if min_share < 10.0:
+        st.warning(
+            "Revision: uno de los clusters queda por debajo de 10% del universo filtrado."
+        )
+    with st.expander("Revision de balance de clusters (k=3)", expanded=False):
+        st.dataframe(
+            balance_df.rename(
+                columns={"cluster": "Cluster", "estudiantes": "Estudiantes"}
+            ),
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Estudiantes": st.column_config.NumberColumn("Estudiantes", format="%d"),
+                "Participacion (%)": st.column_config.NumberColumn(
+                    "Participacion (%)", format="%.1f%%"
+                ),
+            },
+        )
 
 tab_mapa, tab_perfiles, tab_detalle, tab_detalle_graficos, tab_universidades, tab_metodo = st.tabs(
     [
@@ -711,97 +1072,15 @@ with tab_detalle:
 
 with tab_detalle_graficos:
     st.caption(
-        "Distribucion apilada por cluster para las mismas variables resumidas en la tabla de detalle."
+        "Tabla de detalle con mini-graficos de distribucion (%) por cluster."
     )
-
-    age_col, gender_col = st.columns(2)
-    with age_col:
-        st.plotly_chart(
-            _stacked_bar_chart(
-                students_df,
-                _age_bucket(students_df["edad_estudiante"]),
-                "Edad estudiante",
-                category_order=["15-19 anos", "20-22 anos", "23-25 anos", "Mas de 25 anos", "Sin dato"],
-            ),
-            use_container_width=True,
-        )
-    with gender_col:
-        st.plotly_chart(
-            _stacked_bar_chart(
-                students_df,
-                students_df["sexo_estudiante"],
-                "Genero estudiante",
-                category_order=["MUJER", "HOMBRE", "DESCONOCIDO"],
-            ),
-            use_container_width=True,
-        )
-
-    quito_col, ingreso_col = st.columns(2)
-    with quito_col:
-        st.plotly_chart(
-            _stacked_bar_chart(
-                students_df,
-                _yes_no_series(students_df["estudiante_quito"]),
-                "Es de Quito",
-                category_order=["Si", "No"],
-            ),
-            use_container_width=True,
-        )
-    with ingreso_col:
-        st.plotly_chart(
-            _stacked_bar_chart(
-                students_df,
-                students_df["quintil_ingreso_hogar"],
-                "Quintil de ingresos",
-                category_order=["Sin empleo", "1", "2", "3", "4", "5"],
-            ),
-            use_container_width=True,
-        )
-
-    hijos_col, deuda_col = st.columns(2)
-    with hijos_col:
-        st.plotly_chart(
-            _stacked_bar_chart(
-                students_df,
-                _hijos_bucket(students_df["hijos_hogar_promedio"]),
-                "Promedio hijos en el hogar",
-                category_order=["0", "1", "2", "3", "4", "5+"],
-            ),
-            use_container_width=True,
-        )
-    with deuda_col:
-        st.plotly_chart(
-            _stacked_bar_chart(
-                students_df,
-                students_df["quintil_deuda_hogar"],
-                "Hogares con deuda / quintil deuda",
-                category_order=["Sin deuda", "1", "2", "3", "4", "5"],
-                unique_id_col="hogar_id",
-            ),
-            use_container_width=True,
-        )
-
-    estado_col, tipo_col = st.columns(2)
-    with estado_col:
-        st.plotly_chart(
-            _stacked_bar_chart(
-                students_df,
-                students_df["estado_hogar"],
-                "Estado del hogar",
-            ),
-            use_container_width=True,
-        )
-    with tipo_col:
-        st.plotly_chart(
-            _stacked_bar_chart(
-                students_df,
-                _yes_no_series(students_df["primera_generacion"]).replace(
-                    {"Si": "Primera generacion", "No": "No primera generacion"}
-                ),
-                "Tipo de estudiantes",
-                category_order=["Primera generacion", "No primera generacion"],
-            ),
-            use_container_width=True,
+    detail_chart_df, legend_map = _detail_chart_table(students_df, summary_df)
+    if detail_chart_df.empty:
+        st.info("No hay datos suficientes para construir detalle con graficos.")
+    else:
+        st.markdown(
+            _detail_chart_table_html(detail_chart_df, legend_map),
+            unsafe_allow_html=True,
         )
 
 with tab_universidades:
@@ -900,8 +1179,9 @@ with tab_metodo:
     st.dataframe(methodology, use_container_width=True, hide_index=True)
 
     st.markdown(
-        "El numero de clusters se elige automaticamente con el indice de "
-        "Calinski-Harabasz, manteniendo grupos con tamano minimo razonable."
+        "En esta pagina el numero de clusters se fija en 3 para mantener "
+        "comparabilidad entre filtros. Se muestra una revision de balance de tamanos "
+        "para validar que la segmentacion no genere grupos residuales."
     )
     st.markdown(
         "En la pestaña `Cluster Universidades`, los clusters se entrenan con UDLA y "

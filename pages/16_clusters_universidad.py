@@ -24,6 +24,7 @@ from utils.quintile_ranges import asignar_quintil_por_rangos, calcular_rangos_qu
 from utils.udla_clusters import run_udla_cluster_analysis
 
 st.set_page_config(page_title="Clusters Universidad", page_icon="C", layout="wide")
+REGISTRATION_BASE_YEAR = 2025
 
 
 def _clean_series(series: pd.Series, default: str = "Sin dato") -> pd.Series:
@@ -43,6 +44,51 @@ def _round_half_up(value: float) -> int:
     return int(math.floor(number + 0.5))
 
 
+def _normalize_id(series: pd.Series) -> pd.Series:
+    return (
+        pd.Series(series)
+        .astype("string")
+        .fillna("0")
+        .astype(str)
+        .str.strip()
+        .replace({"": "0", "nan": "0", "None": "0", "<NA>": "0"})
+    )
+
+
+def _find_column_name(df: pd.DataFrame, aliases: list[str]) -> str | None:
+    normalized = {
+        str(column).strip().upper().replace(" ", "_"): str(column)
+        for column in df.columns
+    }
+    for alias in aliases:
+        match = normalized.get(alias.strip().upper().replace(" ", "_"))
+        if match is not None:
+            return match
+    return None
+
+
+def _extract_student_registration_date(students_sheet: pd.DataFrame) -> pd.DataFrame:
+    raw = students_sheet.copy()
+    id_col = _find_column_name(raw, ["IDENTIFICACION", "CEDULA", "Cedula"])
+    fecha_col = _find_column_name(raw, ["FECHA_REGISTRO", "FECHA REGISTRO"])
+
+    if id_col is None:
+        return pd.DataFrame(columns=["IDENTIFICACION", "est_FECHA_REGISTRO"])
+
+    out = pd.DataFrame(index=raw.index)
+    out["IDENTIFICACION"] = _normalize_id(raw[id_col])
+    if fecha_col is None:
+        out["est_FECHA_REGISTRO"] = pd.NaT
+    else:
+        out["est_FECHA_REGISTRO"] = pd.to_datetime(
+            raw[fecha_col],
+            errors="coerce",
+            dayfirst=True,
+        )
+    out = out[out["IDENTIFICACION"] != "0"].copy()
+    return out.drop_duplicates(subset=["IDENTIFICACION"], keep="first")
+
+
 @st.cache_data(show_spinner=False)
 def _build_universidades_base() -> pd.DataFrame:
     sheets = {
@@ -51,6 +97,8 @@ def _build_universidades_base() -> pd.DataFrame:
     }
 
     students = _prepare_students(sheets["Estudiantes"], default_university=None)
+    students_reg = _extract_student_registration_date(sheets["Estudiantes"])
+    students = students.merge(students_reg, on="IDENTIFICACION", how="left")
     familia = _prepare_familia(sheets["Universo Familiares"])
     info = _prepare_info(sheets["Informacion Personal"])
     empleo = _prepare_empleo(sheets["Empleos"])
@@ -177,7 +225,16 @@ def _build_universidades_base() -> pd.DataFrame:
         base["GENERO_CANON"],
     )
     base["sexo_estudiante"] = base["sexo_estudiante"].map(_canonical_sex)
-    base["edad_estudiante"] = _to_numeric(base["est_EDAD"], default=np.nan)
+    registro_year = (
+        pd.to_datetime(base["est_FECHA_REGISTRO"], errors="coerce", dayfirst=True).dt.year
+        if "est_FECHA_REGISTRO" in base.columns
+        else pd.Series(np.nan, index=base.index, dtype="float64")
+    )
+    ajuste_edad = 4 + (REGISTRATION_BASE_YEAR - registro_year)
+    ajuste_edad = ajuste_edad.where(registro_year.notna(), 4)
+    base["edad_estudiante"] = (
+        _to_numeric(base["est_EDAD"], default=np.nan) - ajuste_edad
+    ).clip(lower=0)
     base["salario_hogar"] = base["salario_padre"] + base["salario_madre"]
     base["deuda_hogar"] = base["deuda_padre"] + base["deuda_madre"]
     base["hijos_hogar"] = base[["padre_HIJOS_NUM", "madre_HIJOS_NUM"]].max(axis=1)

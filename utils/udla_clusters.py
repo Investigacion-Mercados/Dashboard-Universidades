@@ -304,13 +304,15 @@ def _transform_scaled(feature_df: pd.DataFrame, scaler: dict[str, Any]) -> np.nd
     return scaled
 
 
-def _run_kmeans_labels(scaled: np.ndarray, requested_k: int) -> np.ndarray:
+def _run_kmeans_labels(
+    scaled: np.ndarray, requested_k: int, *, seed_token: str | None = None
+) -> np.ndarray:
     n_rows = scaled.shape[0]
     k = max(1, min(int(requested_k), n_rows))
     if k == 1:
         return np.ones(n_rows, dtype=int)
 
-    seed = _stable_seed(f"udla-students-{requested_k}")
+    seed = _stable_seed(seed_token or f"udla-students-{requested_k}")
     try:
         _centroids, labels = kmeans2(scaled, k, minit="points", iter=50, seed=seed)
         labels = np.asarray(labels, dtype=int)
@@ -321,6 +323,50 @@ def _run_kmeans_labels(scaled: np.ndarray, requested_k: int) -> np.ndarray:
             labels[chunk] = idx
 
     return labels + 1
+
+
+def _income_mode_diversity(labels: np.ndarray, income_series: pd.Series) -> int:
+    if len(labels) == 0:
+        return 0
+
+    incomes = pd.to_numeric(income_series, errors="coerce").fillna(-1).astype(int)
+    frame = pd.DataFrame({"cluster_id": labels, "income": incomes})
+    if frame.empty:
+        return 0
+
+    modes = frame.groupby("cluster_id")["income"].agg(
+        lambda s: int(pd.Series(s).mode().iloc[0]) if not pd.Series(s).mode().empty else -1
+    )
+    valid_modes = modes[modes >= 0]
+    return int(valid_modes.nunique())
+
+
+def _income_anchor_labels(
+    income_series: pd.Series, requested_k: int, *, min_size: int
+) -> np.ndarray | None:
+    values = pd.to_numeric(income_series, errors="coerce").fillna(-1).astype(int)
+    clean_values = values[values >= 0]
+    if clean_values.empty:
+        return None
+
+    unique_income = sorted(clean_values.unique().tolist())
+    k = int(requested_k)
+    if k <= 1 or len(unique_income) < k:
+        return None
+
+    anchor_idx = np.linspace(0, len(unique_income) - 1, k).round().astype(int).tolist()
+    anchors = [int(unique_income[idx]) for idx in anchor_idx]
+    if len(set(anchors)) < k:
+        return None
+
+    income_np = values.to_numpy(dtype=float)
+    dist = np.abs(income_np[:, None] - np.asarray(anchors, dtype=float)[None, :])
+    labels = np.argmin(dist, axis=1).astype(int) + 1
+
+    unique_labels, counts = np.unique(labels, return_counts=True)
+    if len(unique_labels) != k or int(counts.min()) < int(min_size):
+        return None
+    return labels
 
 
 def _minimum_cluster_size(n_rows: int) -> int:
@@ -382,7 +428,13 @@ def _calinski_harabasz_score(matrix: np.ndarray, labels: np.ndarray) -> float:
 
 
 def _assign_clusters(
-    feature_df: pd.DataFrame, min_clusters: int = 2, max_clusters: int = 6
+    feature_df: pd.DataFrame,
+    min_clusters: int = 2,
+    max_clusters: int = 6,
+    *,
+    income_series: pd.Series | None = None,
+    prefer_distinct_income_modal: bool = False,
+    cluster_trials: int = 1,
 ) -> tuple[np.ndarray, int]:
     if feature_df.empty:
         return np.array([], dtype=int), 0
@@ -398,20 +450,30 @@ def _assign_clusters(
     min_size = _minimum_cluster_size(n_rows)
     evaluations: list[dict[str, Any]] = []
     for k in candidates:
-        labels = _run_kmeans_labels(scaled, k)
-        unique_labels, counts = np.unique(labels, return_counts=True)
-        if len(unique_labels) <= 1:
-            continue
+        n_trials = max(1, int(cluster_trials))
+        for trial_idx in range(n_trials):
+            seed_token = f"udla-students-{k}-trial-{trial_idx}"
+            labels = _run_kmeans_labels(scaled, k, seed_token=seed_token)
+            unique_labels, counts = np.unique(labels, return_counts=True)
+            if len(unique_labels) <= 1:
+                continue
 
-        score = _calinski_harabasz_score(scaled, labels)
-        evaluations.append(
-            {
-                "k": int(k),
-                "labels": labels,
-                "score": score,
-                "is_valid": len(unique_labels) == k and int(counts.min()) >= min_size,
-            }
-        )
+            score = _calinski_harabasz_score(scaled, labels)
+            income_mode_count = (
+                _income_mode_diversity(labels, income_series)
+                if income_series is not None
+                else 0
+            )
+            evaluations.append(
+                {
+                    "k": int(k),
+                    "labels": labels,
+                    "score": score,
+                    "is_valid": len(unique_labels) == k and int(counts.min()) >= min_size,
+                    "min_count": int(counts.min()),
+                    "income_mode_count": int(income_mode_count),
+                }
+            )
 
     if not evaluations:
         labels = _run_kmeans_labels(scaled, 1)
@@ -428,8 +490,30 @@ def _assign_clusters(
             max(2, int(round(np.sqrt(max(n_rows, 1) / 2.0)))),
             max(candidates),
         )
-        labels = _run_kmeans_labels(scaled, fallback)
+        labels = _run_kmeans_labels(scaled, fallback, seed_token=f"udla-students-{fallback}-fallback")
         return labels, int(np.unique(labels).size)
+
+    if prefer_distinct_income_modal and income_series is not None:
+        max_income_modes = max(
+            int(item.get("income_mode_count", 0)) for item in candidate_pool
+        )
+        mode_candidates = [
+            item
+            for item in candidate_pool
+            if int(item.get("income_mode_count", 0)) == max_income_modes
+        ]
+        if mode_candidates:
+            best_mode_score = max(float(item["score"]) for item in mode_candidates)
+            close_mode_candidates = [
+                item
+                for item in mode_candidates
+                if float(item["score"]) >= best_mode_score * 0.97
+            ]
+            chosen_income = max(
+                close_mode_candidates,
+                key=lambda item: (int(item.get("min_count", 0)), float(item["score"]), -int(item["k"])),
+            )
+            return np.asarray(chosen_income["labels"], dtype=int), int(chosen_income["k"])
 
     best_score = max(float(item["score"]) for item in candidate_pool)
     close_candidates = [
@@ -580,7 +664,12 @@ def _nearest_cluster_assignment(
 
 @st.cache_data(show_spinner=False)
 def run_udla_cluster_analysis(
-    filtered_df: pd.DataFrame, min_clusters: int = 2, max_clusters: int = 6
+    filtered_df: pd.DataFrame,
+    min_clusters: int = 2,
+    max_clusters: int = 6,
+    *,
+    prefer_distinct_income_modal: bool = False,
+    cluster_trials: int = 1,
 ) -> dict[str, Any]:
     if filtered_df.empty:
         return {
@@ -590,13 +679,37 @@ def run_udla_cluster_analysis(
             "feature_columns": [],
             "k": 0,
         }
-
     feature_df = _build_feature_frame(filtered_df)
     labels, chosen_k = _assign_clusters(
         feature_df,
         min_clusters=min_clusters,
         max_clusters=max_clusters,
+        income_series=filtered_df.get("quintil_ingreso_num", pd.Series(dtype="float")),
+        prefer_distinct_income_modal=prefer_distinct_income_modal,
+        cluster_trials=cluster_trials,
     )
+    if (
+        prefer_distinct_income_modal
+        and int(min_clusters) == int(max_clusters)
+        and int(chosen_k) == int(min_clusters)
+        and int(chosen_k) > 1
+    ):
+        income_series = filtered_df.get("quintil_ingreso_num", pd.Series(dtype="float"))
+        current_income_modes = _income_mode_diversity(labels, income_series)
+        target_income_modes = min(
+            int(chosen_k),
+            int(pd.to_numeric(income_series, errors="coerce").dropna().astype(int).nunique()),
+        )
+        if current_income_modes < target_income_modes:
+            fallback_labels = _income_anchor_labels(
+                income_series,
+                int(chosen_k),
+                min_size=_minimum_cluster_size(len(filtered_df)),
+            )
+            if fallback_labels is not None:
+                fallback_income_modes = _income_mode_diversity(fallback_labels, income_series)
+                if fallback_income_modes > current_income_modes:
+                    labels = np.asarray(fallback_labels, dtype=int)
 
     clustered = filtered_df.copy()
     clustered["cluster_id"] = labels
@@ -637,6 +750,9 @@ def run_university_cluster_projection(
     candidate_df: pd.DataFrame | None = None,
     min_clusters: int = 2,
     max_clusters: int = 6,
+    *,
+    prefer_distinct_income_modal: bool = False,
+    cluster_trials: int = 1,
 ) -> dict[str, Any]:
     if udla_reference_df.empty:
         return {
@@ -675,12 +791,38 @@ def run_university_cluster_projection(
             "k": 0,
             "other_count": 0,
         }
-
     template = _fit_feature_template(udla_df)
     udla_feature_df = _build_feature_frame_from_template(udla_df, template)
     udla_labels, chosen_k = _assign_clusters(
-        udla_feature_df, min_clusters=min_clusters, max_clusters=max_clusters
+        udla_feature_df,
+        min_clusters=min_clusters,
+        max_clusters=max_clusters,
+        income_series=udla_df.get("quintil_ingreso_num", pd.Series(dtype="float")),
+        prefer_distinct_income_modal=prefer_distinct_income_modal,
+        cluster_trials=cluster_trials,
     )
+    if (
+        prefer_distinct_income_modal
+        and int(min_clusters) == int(max_clusters)
+        and int(chosen_k) == int(min_clusters)
+        and int(chosen_k) > 1
+    ):
+        income_series = udla_df.get("quintil_ingreso_num", pd.Series(dtype="float"))
+        current_income_modes = _income_mode_diversity(udla_labels, income_series)
+        target_income_modes = min(
+            int(chosen_k),
+            int(pd.to_numeric(income_series, errors="coerce").dropna().astype(int).nunique()),
+        )
+        if current_income_modes < target_income_modes:
+            fallback_labels = _income_anchor_labels(
+                income_series,
+                int(chosen_k),
+                min_size=_minimum_cluster_size(len(udla_df)),
+            )
+            if fallback_labels is not None:
+                fallback_income_modes = _income_mode_diversity(fallback_labels, income_series)
+                if fallback_income_modes > current_income_modes:
+                    udla_labels = np.asarray(fallback_labels, dtype=int)
 
     scaler = _fit_scaler(udla_feature_df)
     udla_scaled = _transform_scaled(udla_feature_df, scaler)
